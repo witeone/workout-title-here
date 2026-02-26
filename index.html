@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Workout Log</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <!-- Minimal, modern base styling -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/@picocss/pico@2.0.0-rc1/css/pico.min.css"
+    />
+  </head>
+  <body>
+    <main class="container">
+      <header class="app-header">
+        <div>
+          <h1>Workout Log</h1>
+          <p class="muted">
+            Track your sessions with Firebase login & storage.
+          </p>
+        </div>
+        <div id="user-info" class="user-info hidden">
+          <span id="user-email"></span>
+          <button id="logout-btn" class="secondary outline">Log out</button>
+        </div>
+      </header>
+
+      <section id="auth-section">
+        <article>
+          <nav class="tab-nav">
+            <button
+              id="login-tab"
+              class="tab active"
+              type="button"
+              data-target="login-form"
+            >
+              Log in
+            </button>
+            <button
+              id="signup-tab"
+              class="tab"
+              type="button"
+              data-target="signup-form"
+            >
+              Sign up
+            </button>
+          </nav>
+
+          <form id="login-form" class="auth-form" data-mode="login">
+            <label>
+              Email
+              <input
+                type="email"
+                id="login-email"
+                name="email"
+                autocomplete="email"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                id="login-password"
+                name="password"
+                autocomplete="current-password"
+                minlength="6"
+                required
+              />
+            </label>
+            <button type="submit">Log in</button>
+          </form>
+
+          <form
+            id="signup-form"
+            class="auth-form hidden"
+            data-mode="signup"
+          >
+            <label>
+              Email
+              <input
+                type="email"
+                id="signup-email"
+                name="email"
+                autocomplete="email"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                id="signup-password"
+                name="password"
+                autocomplete="new-password"
+                minlength="6"
+                required
+              />
+            </label>
+            <small class="muted">
+              Password must be at least 6 characters (Firebase requirement).
+            </small>
+            <button type="submit">Create account</button>
+          </form>
+
+          <p id="auth-error" class="error-message hidden"></p>
+        </article>
+      </section>
+
+      <section id="app-section" class="hidden">
+        <article id="log-workout-article">
+          <h2>Log workout</h2>
+          <div id="start-workout-wrap">
+            <p class="muted">Start a workout to log sets. The session stays here until you finish it.</p>
+            <button type="button" id="start-workout-btn">Start workout</button>
+          </div>
+          <div id="active-workout-wrap" class="hidden">
+            <p id="active-workout-date-label" class="active-date-label"></p>
+            <p class="muted active-workout-hint">You can leave the page anytime and continue this workout when you return. Click “Finish workout” when you’re done for good.</p>
+            <div class="table-wrapper">
+              <table class="workouts-table">
+                <thead>
+                  <tr>
+                    <th>Exercise</th>
+                    <th>Weight</th>
+                    <th>Reps</th>
+                    <th>Superset</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="active-workout-body"></tbody>
+              </table>
+            </div>
+            <form id="workout-form" class="grid">
+              <input type="hidden" id="workout-date" />
+            <div>
+              <label>
+                Exercise
+                <input type="text" id="exercise-name" placeholder="e.g. Lat pulldown" required />
+              </label>
+            </div>
+            <div>
+              <label>
+                Weight (kg)
+                <input
+                  type="number"
+                  id="weight"
+                  min="0"
+                  step="0.5"
+                  required
+                />
+              </label>
+            </div>
+            <div>
+              <label>
+                Reps
+                <input
+                  type="number"
+                  id="reps"
+                  min="1"
+                  step="1"
+                  required
+                />
+              </label>
+            </div>
+            <div>
+              <label>
+                Superset with
+                <select id="superset-with">
+                  <option value="">No superset</option>
+                </select>
+              </label>
+            </div>
+            <div>
+              <label>
+                Notes
+                <input
+                  type="text"
+                  id="notes"
+                  placeholder="Optional notes"
+                />
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" id="workout-submit-btn">Add set</button>
+              <button
+                type="button"
+                id="workout-cancel-edit-btn"
+                class="secondary outline hidden"
+              >
+                Cancel edit
+              </button>
+            </div>
+          </form>
+          <p id="edit-indicator" class="muted hidden">
+            Editing an existing set. Make changes and press “Update set”, or
+            cancel.
+          </p>
+          <p id="comparison-message" class="comparison-message hidden"></p>
+          <p id="workout-error" class="error-message hidden"></p>
+          <div class="finish-workout-row">
+            <button type="button" id="finish-workout-btn" class="secondary">Finish workout</button>
+          </div>
+          </div>
+        </article>
+
+        <article id="recent-workouts-article">
+          <h2>Recent workouts</h2>
+          <div id="recent-dates-view">
+            <p class="muted">Days you worked out. Click a date to view or edit.</p>
+            <ul id="recent-dates-list" class="dates-list"></ul>
+          </div>
+          <div id="recent-detail-view" class="hidden">
+            <header class="detail-header">
+              <button type="button" id="detail-back-btn" class="secondary outline">Back</button>
+              <div>
+                <p id="detail-date-label" class="active-date-label"></p>
+                <p id="detail-session-meta" class="muted session-meta"></p>
+              </div>
+            </header>
+            <div class="table-wrapper">
+              <table class="workouts-table">
+                <thead>
+                  <tr>
+                    <th>Exercise</th>
+                    <th>Weight</th>
+                    <th>Reps</th>
+                    <th>Superset</th>
+                    <th>Notes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="detail-workout-body"></tbody>
+              </table>
+            </div>
+            <div id="detail-add-set" class="add-set-inline">
+              <p class="muted">Add a set to this day:</p>
+              <form id="detail-workout-form" class="grid">
+                <input type="hidden" id="detail-workout-date" />
+                <div><label>Exercise <input type="text" id="detail-exercise-name" placeholder="e.g. Lat pulldown" required /></label></div>
+                <div><label>Weight (kg) <input type="number" id="detail-weight" min="0" step="0.5" required /></label></div>
+                <div><label>Reps <input type="number" id="detail-reps" min="1" step="1" required /></label></div>
+                <div><label>Superset with <select id="detail-superset-with"><option value="">No superset</option></select></label></div>
+                <div><label>Notes <input type="text" id="detail-notes" placeholder="Optional" /></label></div>
+                <div class="form-actions"><button type="submit" id="detail-add-set-btn">Add set</button></div>
+              </form>
+            </div>
+            <p id="detail-workout-error" class="error-message hidden"></p>
+          </div>
+        </article>
+
+        <article id="stats-article">
+          <h2>Workout stats</h2>
+          <div id="stats-overview" class="stats-grid"></div>
+          <h3>Activity</h3>
+          <div id="stats-activity" class="stats-activity"></div>
+          <h3>Top exercises (by sets)</h3>
+          <div id="stats-exercises" class="stats-list"></div>
+          <h3>Volume by exercise (kg × reps)</h3>
+          <div id="stats-volume" class="stats-list"></div>
+        </article>
+      </section>
+
+      <footer class="muted footer">
+        <small>
+          Configure Firebase in <code>firebase-config.js</code> before using
+          the app. Sessions are grouped by date, like one notebook page per day.
+        </small>
+      </footer>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
+
