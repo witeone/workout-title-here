@@ -1,8 +1,6 @@
 import { firebaseConfig } from "./firebase-config.js";
-
-import {
-  initializeApp,
-} from "https://www.gstatic.com/firebasejs/10.11.1/firebase-app.js";
+import { KNOWN_EXERCISES } from "./exercises-data.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.1/firebase-app.js";
 import {
   getAuth,
   onAuthStateChanged,
@@ -18,67 +16,59 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
-  orderBy,
-  limit,
   getDocs,
   onSnapshot,
   serverTimestamp,
   Timestamp,
+  runTransaction,
 } from "https://www.gstatic.com/firebasejs/10.11.1/firebase-firestore.js";
 
-// ----- Firebase setup -----
-
 if (!firebaseConfig || firebaseConfig.apiKey === "REPLACE_ME") {
-  console.warn(
-    "[Workout Log] firebaseConfig is not configured. " +
-      "Copy firebase-config.example.js to firebase-config.js and fill in your keys.",
-  );
+  console.warn("[Workout] firebaseConfig not configured. Copy firebase-config.example.js to firebase-config.js.");
 }
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// ----- DOM helpers -----
-
-const $ = (selector) => document.querySelector(selector);
-
+const $ = (s) => document.querySelector(s);
 const authSection = $("#auth-section");
 const appSection = $("#app-section");
+const appNav = $("#app-nav");
+const headerLoggedIn = $("#header-logged-in");
 const authError = $("#auth-error");
-const workoutError = $("#workout-error");
-const userInfo = $("#user-info");
+const userInfo = $(".user-info");
 const userEmailEl = $("#user-email");
 
-const workoutForm = $("#workout-form");
-const workoutSubmitBtn = document.getElementById("workout-submit-btn");
-const workoutCancelEditBtn = document.getElementById("workout-cancel-edit-btn");
-const editIndicator = document.getElementById("edit-indicator");
-const workoutDateInput = document.getElementById("workout-date");
-const supersetSelect = document.getElementById("superset-with");
-const comparisonMessageEl = document.getElementById("comparison-message");
-const startWorkoutWrap = document.getElementById("start-workout-wrap");
-const activeWorkoutWrap = document.getElementById("active-workout-wrap");
-const activeWorkoutBody = document.getElementById("active-workout-body");
-const activeWorkoutDateLabel = document.getElementById("active-workout-date-label");
-const finishWorkoutBtn = document.getElementById("finish-workout-btn");
-const recentDatesList = document.getElementById("recent-dates-list");
-const recentDatesView = document.getElementById("recent-dates-view");
-const recentDetailView = document.getElementById("recent-detail-view");
-const detailBackBtn = document.getElementById("detail-back-btn");
-const detailDateLabel = document.getElementById("detail-date-label");
-const detailWorkoutBody = document.getElementById("detail-workout-body");
-const detailWorkoutForm = document.getElementById("detail-workout-form");
-const detailWorkoutDate = document.getElementById("detail-workout-date");
-const detailExerciseName = document.getElementById("detail-exercise-name");
-const detailWeight = document.getElementById("detail-weight");
-const detailReps = document.getElementById("detail-reps");
-const detailSupersetWith = document.getElementById("detail-superset-with");
-const detailNotes = document.getElementById("detail-notes");
-const detailWorkoutError = document.getElementById("detail-workout-error");
-const detailSessionMeta = document.getElementById("detail-session-meta");
+let currentUser = null;
+let editingWorkoutId = null;
+let detailEditingId = null;
+let currentWorkouts = new Map();
+let currentSessions = new Map();
+let activeSessionId = null;
+let selectedSessionId = null;
+let selectedDateForDetail = null;
+let unsubscribeWorkouts = null;
+let unsubscribeWorkoutSessions = null;
+let unsubscribeSession = null;
+let currentCompetitions = new Map();
+let myParticipations = new Map();
+let selectedCompetitionId = null;
+let lastAddedSet = null;
+let unsubscribeCompetitions = null;
+let unsubscribeParticipations = null;
+let userExercises = [];
+let unsubscribeUserExercises = null;
+
+// ----- Auth UI -----
+function setAuthError(msg) {
+  if (!authError) return;
+  authError.textContent = msg || "";
+  authError.classList.toggle("hidden", !msg);
+}
 
 const loginTab = $("#login-tab");
 const signupTab = $("#signup-tab");
@@ -86,282 +76,358 @@ const loginForm = $("#login-form");
 const signupForm = $("#signup-form");
 const logoutBtn = $("#logout-btn");
 
-let unsubscribeWorkouts = null;
-let unsubscribeSession = null;
-let currentUser = null;
-let editingWorkoutId = null;
-let detailEditingId = null;
-let currentWorkouts = new Map();
-let highlightedSupersetRowId = null;
-let activeSessionId = null;
-let selectedSessionId = null;
-let selectedDateForDetail = null;
-let currentSessions = new Map();
-let unsubscribeWorkoutSessions = null;
-
-// ----- Auth UI -----
-
-function setAuthError(message) {
-  if (!message) {
-    authError.textContent = "";
-    authError.classList.add("hidden");
-    return;
-  }
-  authError.textContent = message;
-  authError.classList.remove("hidden");
-}
-
-function setWorkoutError(message) {
-  if (!message) {
-    workoutError.textContent = "";
-    workoutError.classList.add("hidden");
-    return;
-  }
-  workoutError.textContent = message;
-  workoutError.classList.remove("hidden");
-}
-
 function switchAuthTab(target) {
   if (target === "login-form") {
-    loginTab.classList.add("active");
-    signupTab.classList.remove("active");
-    loginForm.classList.remove("hidden");
-    signupForm.classList.add("hidden");
+    loginTab?.classList.add("active");
+    signupTab?.classList.remove("active");
+    loginForm?.classList.remove("hidden");
+    signupForm?.classList.add("hidden");
   } else {
-    signupTab.classList.add("active");
-    loginTab.classList.remove("active");
-    signupForm.classList.remove("hidden");
-    loginForm.classList.add("hidden");
+    signupTab?.classList.add("active");
+    loginTab?.classList.remove("active");
+    signupForm?.classList.remove("hidden");
+    loginForm?.classList.add("hidden");
   }
   setAuthError("");
 }
 
-loginTab.addEventListener("click", () => switchAuthTab("login-form"));
-signupTab.addEventListener("click", () => switchAuthTab("signup-form"));
+loginTab?.addEventListener("click", () => switchAuthTab("login-form"));
+signupTab?.addEventListener("click", () => switchAuthTab("signup-form"));
 
-loginForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+loginForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
   setAuthError("");
-
-  const email = $("#login-email").value.trim();
-  const password = $("#login-password").value;
-
+  const email = $("#login-email")?.value;
+  const password = $("#login-password")?.value;
+  if (!email || !password) return;
   try {
     await signInWithEmailAndPassword(auth, email, password);
-  } catch (error) {
-    console.error(error);
-    setAuthError(prettyAuthError(error));
+  } catch (err) {
+    setAuthError(err.code === "auth/invalid-credential" ? "Incorrect email or password." : err.message);
   }
 });
 
-signupForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+signupForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
   setAuthError("");
-
-  const email = $("#signup-email").value.trim();
-  const password = $("#signup-password").value;
-
+  const email = $("#signup-email")?.value;
+  const password = $("#signup-password")?.value;
+  if (!email || !password) return;
   try {
     await createUserWithEmailAndPassword(auth, email, password);
-  } catch (error) {
-    console.error(error);
-    setAuthError(prettyAuthError(error));
+  } catch (err) {
+    if (err.code === "auth/email-already-in-use") setAuthError("This email is already registered.");
+    else if (err.code === "auth/weak-password") setAuthError("Password must be at least 6 characters.");
+    else setAuthError(err.message);
   }
 });
 
-logoutBtn.addEventListener("click", async () => {
-  try {
-    await signOut(auth);
-  } catch (error) {
-    console.error(error);
-  }
-});
+logoutBtn?.addEventListener("click", () => signOut(auth));
 
-function prettyAuthError(error) {
-  if (!error || !error.code) return "Something went wrong. Please try again.";
-
-  switch (error.code) {
-    case "auth/invalid-email":
-      return "The email address is not valid.";
-    case "auth/user-disabled":
-      return "This account has been disabled.";
-    case "auth/user-not-found":
-    case "auth/wrong-password":
-      return "Incorrect email or password.";
-    case "auth/email-already-in-use":
-      return "This email is already registered.";
-    case "auth/weak-password":
-      return "Password is too weak (min 6 characters).";
-    default:
-      return error.message || "Authentication error. Please try again.";
-  }
+// ----- SPA routing -----
+function getCurrentPath() {
+  const p = window.location.pathname.replace(/\/$/, "") || "/";
+  return p || "/log";
 }
 
-// ----- Auth state handling -----
+function navigate(path) {
+  path = path || "/log";
+  if (path === "/") path = "/log";
+  if (path !== getCurrentPath()) window.history.pushState({ path }, "", path);
+  if (path === "/exercises") renderExercisesSection();
+  if (path === "/competition") populateExerciseSelects([...currentWorkouts.values()].map((d) => d.exerciseName).filter(Boolean));
+  appSection?.querySelectorAll("[data-route]").forEach((el) => {
+    el.classList.toggle("hidden", el.getAttribute("data-route") !== path);
+  });
+  appNav?.querySelectorAll("[data-route]").forEach((a) => {
+    a.setAttribute("aria-current", a.getAttribute("data-route") === path ? "page" : null);
+  });
+}
 
+function initRouter() {
+  window.addEventListener("popstate", (e) => navigate(e.state?.path ?? getCurrentPath()));
+  document.querySelectorAll("a[data-route]").forEach((a) => {
+    a.addEventListener("click", (e) => { e.preventDefault(); navigate(a.getAttribute("data-route")); });
+  });
+  if (appSection && !appSection.classList.contains("hidden")) navigate(getCurrentPath());
+}
+
+// ----- Auth state -----
 onAuthStateChanged(auth, (user) => {
   currentUser = user;
-
   if (user) {
     authSection.classList.add("hidden");
     appSection.classList.remove("hidden");
-    userInfo.classList.remove("hidden");
+    headerLoggedIn?.classList.remove("hidden");
     userEmailEl.textContent = user.email ?? "";
-
+    navigate(getCurrentPath());
     subscribeToWorkouts(user.uid);
     subscribeToWorkoutSessions(user.uid);
     subscribeToSession(user.uid);
+    subscribeToCompetitions();
+    subscribeToParticipations(user.uid);
+    subscribeToUserExercises(user.uid);
+    loadProfile(user.uid);
+    $("#profile-email").value = user.email ?? "";
+    populateExerciseSelects();
+    renderExercisesSection();
   } else {
     appSection.classList.add("hidden");
+    headerLoggedIn?.classList.add("hidden");
     authSection.classList.remove("hidden");
-    userInfo.classList.add("hidden");
     userEmailEl.textContent = "";
     activeSessionId = null;
     selectedSessionId = null;
     selectedDateForDetail = null;
     currentSessions = new Map();
-
-    if (unsubscribeWorkouts) {
-      unsubscribeWorkouts();
-      unsubscribeWorkouts = null;
-    }
-    if (unsubscribeWorkoutSessions) {
-      unsubscribeWorkoutSessions();
-      unsubscribeWorkoutSessions = null;
-    }
-    if (unsubscribeSession) {
-      unsubscribeSession();
-      unsubscribeSession = null;
-    }
-    if (activeWorkoutBody) activeWorkoutBody.innerHTML = "";
-    if (recentDatesList) recentDatesList.innerHTML = "";
-    if (detailWorkoutBody) detailWorkoutBody.innerHTML = "";
+    currentCompetitions = new Map();
+    myParticipations = new Map();
+    selectedCompetitionId = null;
+    userExercises = [];
+    [unsubscribeWorkouts, unsubscribeWorkoutSessions, unsubscribeSession, unsubscribeCompetitions, unsubscribeParticipations, unsubscribeUserExercises].forEach((un) => un?.());
+    document.getElementById("active-workout-body") && (document.getElementById("active-workout-body").innerHTML = "");
+    document.getElementById("recent-dates-list") && (document.getElementById("recent-dates-list").innerHTML = "");
+    document.getElementById("detail-workout-body") && (document.getElementById("detail-workout-body").innerHTML = "");
   }
 });
 
-// ----- Exercise key normalization (so "Lat Pulldown" / "lat pdown" = same exercise) -----
+// ----- Exercises -----
+function getAllExercises() {
+  return [...KNOWN_EXERCISES, ...userExercises];
+}
 
-const EXERCISE_ABBREVIATIONS = {
-  pdown: "pulldown",
-  pd: "pulldown",
-  ld: "pulldown",
-  rows: "rows",
-  ext: "extension",
-  extn: "extension",
-  curl: "curl",
-  press: "press",
-  dec: "deck",
-  fly: "fly",
-  flye: "fly",
-  pull: "pull",
-  pul: "pull",
-  tri: "triceps",
-  bi: "biceps",
-  lat: "lat",
-  unilat: "unilateral",
-  uni: "unilateral",
-};
+function populateExerciseSelects(extraNames = []) {
+  const names = [...new Set([...getAllExercises().map((e) => e.name), ...extraNames])].sort();
+  const opts = (el) => {
+    if (!el) return;
+    const current = el.value;
+    el.innerHTML = '<option value="">Select exercise</option>' + names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+    if (names.includes(current)) el.value = current;
+  };
+  opts($("#exercise-name"));
+  opts($("#detail-exercise-name"));
+  const comp = $("#comp-exercise-name");
+  if (comp) {
+    const cur = comp.value;
+    comp.innerHTML = '<option value="">Select exercise</option>' + names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+    if (names.includes(cur)) comp.value = cur;
+  }
+}
+
+function subscribeToUserExercises(userId) {
+  unsubscribeUserExercises?.();
+  const q = query(collection(db, "exercises"), where("userId", "==", userId));
+  unsubscribeUserExercises = onSnapshot(q, (snap) => {
+    userExercises = snap.docs.map((d) => ({ id: d.id, ...d.data(), isCustom: true }));
+    populateExerciseSelects([...currentWorkouts.values()].map((d) => d.exerciseName).filter(Boolean));
+    renderExercisesSection();
+  });
+}
+
+function renderExercisesSection() {
+  const list = $("#exercises-list");
+  if (!list) return;
+  const exercises = getAllExercises();
+  const byCategory = {};
+  exercises.forEach((e) => {
+    const cat = e.category || "Other";
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(e);
+  });
+  list.innerHTML = Object.entries(byCategory)
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cat, exs]) => `
+      <section class="exercise-category">
+        <h3>${escapeHtml(cat)}</h3>
+        <div class="exercise-grid">
+          ${exs
+            .map(
+              (e) => `
+            <article class="exercise-card" data-exercise="${escapeHtml(e.name)}" tabindex="0">
+              <div class="exercise-card-preview">
+                <img src="${e.imageUrl || ""}" alt="${escapeHtml(e.name)}" class="exercise-thumb" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                <div class="exercise-thumb-placeholder" style="display:none;">No image</div>
+                <h4>${escapeHtml(e.name)}</h4>
+                <span class="exercise-click-hint">Click for form</span>
+              </div>
+              <div class="exercise-card-detail hidden">
+                <button type="button" class="exercise-back-btn secondary outline">← Back</button>
+                <p class="exercise-desc">${escapeHtml(e.description)}</p>
+                <div class="exercise-form">
+                  <strong>Correct form:</strong>
+                  <p>${escapeHtml(e.form)}</p>
+                </div>
+                ${(e.formImages && e.formImages.length ? `<div class="exercise-form-images">${e.formImages.map((url) => `<img src="${url}" alt="Form" class="exercise-form-img" />`).join("")}</div>` : "")}
+              </div>
+            </article>
+          `
+            )
+            .join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+
+  list.querySelectorAll(".exercise-card").forEach((card) => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".exercise-back-btn")) return;
+      const detail = card.querySelector(".exercise-card-detail");
+      detail?.classList.toggle("hidden");
+      card.classList.toggle("exercise-card-expanded", !detail?.classList.contains("hidden"));
+    });
+    card.querySelectorAll(".exercise-back-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const detail = card.querySelector(".exercise-card-detail");
+        detail?.classList.add("hidden");
+        card.classList.remove("exercise-card-expanded");
+      });
+    });
+  });
+}
+
+$("#add-exercise-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) return;
+  const name = $("#new-exercise-name")?.value?.trim();
+  if (!name) return;
+  const category = $("#new-exercise-category")?.value || "Other";
+  const description = $("#new-exercise-desc")?.value?.trim() || "";
+  const form = $("#new-exercise-form")?.value?.trim() || "";
+  const imageUrl = $("#new-exercise-image")?.value?.trim() || null;
+  try {
+    await addDoc(collection(db, "exercises"), {
+      userId: currentUser.uid,
+      name,
+      category,
+      description,
+      form,
+      imageUrl,
+      formImages: imageUrl ? [imageUrl] : [],
+      createdAt: serverTimestamp(),
+    });
+    $("#add-exercise-form").reset();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+// ----- Exercise key -----
+const EXERCISE_ABBREVIATIONS = { pdown: "pulldown", pd: "pulldown", ld: "pulldown", rows: "rows", ext: "extension", press: "press", curl: "curl", tri: "triceps", bi: "biceps", lat: "lat" };
 
 function normalizeExerciseKey(name) {
   if (typeof name !== "string") return "";
-  let s = name
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ");
-  const words = s.split(" ");
-  const expanded = words.map((w) => EXERCISE_ABBREVIATIONS[w] ?? w);
-  return expanded.join(" ").trim();
+  return name.toLowerCase().trim().replace(/\s+/g, " ").split(" ").map((w) => EXERCISE_ABBREVIATIONS[w] ?? w).join(" ").trim();
+}
+
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
 // ----- Workouts -----
+const workoutForm = $("#workout-form");
+const workoutDateInput = $("#workout-date");
+const supersetSelect = $("#superset-with");
 
-function setDefaultDate() {
-  if (!workoutDateInput) return;
-  const date = activeSessionId ? currentSessions.get(activeSessionId)?.date : null;
-  workoutDateInput.value = date || getTodayString();
-  refreshSupersetOptions();
+function setWorkoutError(msg) {
+  const el = $("#workout-error");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("hidden", !msg);
 }
 
-workoutForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+function setComparisonMessage(msg) {
+  const el = $("#comparison-message");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("hidden", !msg);
+}
+
+function getRepsRecommendation(weight, reps) {
+  if (reps > 12) return `Consider increasing weight next set – you hit ${reps} reps.`;
+  if (reps < 6) return `Consider decreasing weight next set – you only did ${reps} reps.`;
+  return "";
+}
+
+function exitEditMode() {
+  editingWorkoutId = null;
+  workoutCancelEditBtn?.classList.add("hidden");
+  editIndicator?.classList.add("hidden");
+  workoutSubmitBtn.textContent = "Add set";
+  setComparisonMessage("");
+}
+
+const workoutCancelEditBtn = $("#workout-cancel-edit-btn");
+const workoutSubmitBtn = document.getElementById("workout-submit-btn");
+const editIndicator = $("#edit-indicator");
+
+workoutForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
   setWorkoutError("");
-
-  if (!currentUser) {
-    setWorkoutError("You must be logged in to add workouts.");
-    return;
-  }
-
-  const date = workoutDateInput.value;
-  const exerciseName = document.getElementById("exercise-name").value.trim();
-  const weight = parseFloat(document.getElementById("weight").value);
-  const reps = parseInt(document.getElementById("reps").value, 10);
-  const supersetWithId = supersetSelect.value || null;
-  const notes = document.getElementById("notes").value.trim();
-
+  setComparisonMessage("");
+  if (!currentUser) return;
+  const date = workoutDateInput?.value;
+  const exerciseName = $("#exercise-name")?.value?.trim();
+  const weight = parseFloat($("#weight")?.value);
+  const reps = parseInt($("#reps")?.value, 10);
+  const supersetWithId = supersetSelect?.value || null;
+  const notes = $("#notes")?.value?.trim();
   if (!date || !exerciseName || Number.isNaN(weight) || Number.isNaN(reps)) {
     setWorkoutError("Please fill in date, exercise, weight and reps.");
     return;
   }
-
   const exerciseKey = normalizeExerciseKey(exerciseName);
-
+    const payload = { userId: currentUser.uid, date, exerciseName: exerciseName.trim(), exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithId, notes: notes || null };
   try {
-    const payload = {
-      userId: currentUser.uid,
-      date,
-      exerciseName,
-      exerciseKey,
-      weight,
-      reps,
-      supersetWithId,
-      notes: notes || null,
-      ...(activeSessionId ? { sessionId: activeSessionId } : {}),
-    };
-
     if (editingWorkoutId) {
-      const ref = doc(db, "workouts", editingWorkoutId);
-      await updateDoc(ref, {
-        ...payload,
-        updatedAt: serverTimestamp(),
-      });
+      await updateDoc(doc(db, "workouts", editingWorkoutId), { ...payload, updatedAt: serverTimestamp() });
       exitEditMode();
     } else {
-      const ref = await addDoc(collection(db, "workouts"), {
-        ...payload,
-        createdAt: serverTimestamp(),
-      });
+      const isFirstSet = activeSessionId && getSetsForSession(activeSessionId).length === 0;
+      await addDoc(collection(db, "workouts"), { ...payload, sessionId: activeSessionId || null, createdAt: serverTimestamp() });
+      if (isFirstSet) {
+        await updateDoc(doc(db, "workoutSessions", activeSessionId), { startedAt: serverTimestamp() });
+      }
       exitEditMode();
-      showComparisonAfterAdd(ref.id, exerciseKey, weight, reps);
+      lastAddedSet = { exerciseKey, weight, reps };
+      offerCompetitionSubmit(exerciseKey, weight, reps);
+      const rec = getRepsRecommendation(weight, reps);
+      if (rec) setComparisonMessage(rec);
     }
-  } catch (error) {
-    console.error(error);
-    setWorkoutError("Failed to save workout. Please try again.");
+  } catch (err) {
+    console.error(err);
+    setWorkoutError("Failed to save.");
   }
 });
 
-workoutCancelEditBtn.addEventListener("click", () => {
-  exitEditMode();
-});
+workoutCancelEditBtn?.addEventListener("click", exitEditMode);
 
-workoutDateInput.addEventListener("change", () => {
-  if (!currentUser) return;
-  refreshSupersetOptions();
-});
+function getTodayString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function subscribeToWorkouts(userId) {
+  unsubscribeWorkouts?.();
+  const q = query(collection(db, "workouts"), where("userId", "==", userId));
+  unsubscribeWorkouts = onSnapshot(q, (snap) => {
+    currentWorkouts = new Map();
+    snap.forEach((d) => currentWorkouts.set(d.id, { ...d.data() }));
+    const legacyNames = [...new Set([...currentWorkouts.values()].map((d) => d.exerciseName).filter(Boolean))];
+    populateExerciseSelects(legacyNames);
+    renderLogSection();
+    renderRecentSection();
+    renderStatsSection();
+  });
+}
 
 function subscribeToWorkoutSessions(userId) {
-  if (unsubscribeWorkoutSessions) {
-    unsubscribeWorkoutSessions();
-    unsubscribeWorkoutSessions = null;
-  }
-  const q = query(
-    collection(db, "workoutSessions"),
-    where("userId", "==", userId),
-  );
-  unsubscribeWorkoutSessions = onSnapshot(q, (snapshot) => {
+  unsubscribeWorkoutSessions?.();
+  const q = query(collection(db, "workoutSessions"), where("userId", "==", userId));
+  unsubscribeWorkoutSessions = onSnapshot(q, (snap) => {
     currentSessions = new Map();
-    snapshot.forEach((docSnap) => {
-      currentSessions.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
-    });
+    snap.forEach((d) => currentSessions.set(d.id, { id: d.id, ...d.data() }));
     renderLogSection();
     renderRecentSection();
     renderStatsSection();
@@ -369,83 +435,231 @@ function subscribeToWorkoutSessions(userId) {
 }
 
 function subscribeToSession(userId) {
-  if (unsubscribeSession) {
-    unsubscribeSession();
-    unsubscribeSession = null;
+  unsubscribeSession?.();
+  const ref = doc(db, "sessions", userId);
+  unsubscribeSession = onSnapshot(ref, (snap) => {
+    activeSessionId = snap.exists() ? snap.data().activeSessionId ?? null : null;
+    renderLogSection();
+  });
+}
+
+const startWorkoutWrap = $("#start-workout-wrap");
+const activeWorkoutWrap = $("#active-workout-wrap");
+const activeWorkoutBody = $("#active-workout-body");
+
+function getSetsForSession(sid) {
+  return [...currentWorkouts.entries()].filter(([, d]) => d.sessionId === sid).map(([id, d]) => ({ id, data: d })).sort((a, b) => (a.data.createdAt?.toMillis?.() ?? 0) - (b.data.createdAt?.toMillis?.() ?? 0));
+}
+
+function getSetsForLegacyDate(date) {
+  return [...currentWorkouts.entries()].filter(([, d]) => d.date === date && !d.sessionId).map(([id, d]) => ({ id, data: d })).sort((a, b) => (a.data.createdAt?.toMillis?.() ?? 0) - (b.data.createdAt?.toMillis?.() ?? 0));
+}
+
+function groupSetsByExercise(sets) {
+  const groups = new Map();
+  for (const s of sets) {
+    const key = s.data.exerciseKey || s.data.exerciseName || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
   }
-  const sessionRef = doc(db, "sessions", userId);
-  unsubscribeSession = onSnapshot(
-    sessionRef,
-    (snap) => {
-      activeSessionId = snap.exists() ? snap.data().activeSessionId ?? null : null;
-      renderLogSection();
-      if (activeSessionId && workoutDateInput) {
-        const sess = currentSessions.get(activeSessionId);
-        if (sess?.date) workoutDateInput.value = sess.date;
-        refreshSupersetOptions();
-      }
-    },
-    () => {
-      activeSessionId = null;
-      renderLogSection();
-    },
-  );
+  return groups;
+}
+
+function formatDateLabel(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
+function getPreviousSet(exerciseKey, currentCreatedAt, excludeId) {
+  const currentMs = currentCreatedAt?.toMillis?.() ?? 0;
+  const candidates = [...currentWorkouts.entries()]
+    .filter(([wid, d]) => wid !== excludeId && (d.exerciseKey || normalizeExerciseKey(d.exerciseName || "")) === exerciseKey)
+    .filter(([, d]) => (d.createdAt?.toMillis?.() ?? 0) < currentMs)
+    .sort((a, b) => (b[1].createdAt?.toMillis?.() ?? 0) - (a[1].createdAt?.toMillis?.() ?? 0));
+  return candidates[0] ? candidates[0][1] : null;
+}
+
+function renderDeltaIcon(current, prev, type) {
+  if (prev == null || current == null) return "";
+  const curr = typeof current === "number" ? current : parseFloat(current);
+  const p = typeof prev === "number" ? prev : parseFloat(prev);
+  if (Number.isNaN(curr) || Number.isNaN(p)) return "";
+  if (curr > p) return `<span class="delta delta-up" title="${type} up from ${p}">↑</span>`;
+  if (curr < p) return `<span class="delta delta-down" title="${type} down from ${p}">↓</span>`;
+  return "";
+}
+
+function renderWorkoutRow(id, data, onEdit, onDelete, hideExerciseName, setNumber) {
+  const supersetLabel = data.supersetWithId && currentWorkouts.has(data.supersetWithId) ? currentWorkouts.get(data.supersetWithId).exerciseName : (data.superset ?? "");
+  const exerciseKey = data.exerciseKey || normalizeExerciseKey(data.exerciseName || "");
+  const prev = getPreviousSet(exerciseKey, data.createdAt, id);
+  const weightIcon = renderDeltaIcon(data.weight, prev?.weight, "Weight");
+  const repsIcon = renderDeltaIcon(data.reps, prev?.reps, "Reps");
+  const setCell = setNumber != null ? `<td class="set-number">${setNumber}</td>` : "";
+  return `<tr data-id="${id}">
+    ${setCell}
+    <td>${hideExerciseName ? "" : escapeHtml(data.exerciseName || "")}</td>
+    <td class="weight-cell">${data.weight ?? ""}${weightIcon}</td>
+    <td class="reps-cell">${data.reps ?? ""}${repsIcon}</td>
+    <td class="superset-cell">${escapeHtml(supersetLabel)}</td>
+    <td>${escapeHtml(data.notes || "")}</td>
+    <td class="workout-actions">${onEdit ? `<button type="button" class="secondary outline edit-set-btn" data-id="${id}">Edit</button>` : ""}${onDelete ? `<button type="button" class="secondary outline delete-set-btn" data-id="${id}">Delete</button>` : ""}</td>
+  </tr>`;
+}
+
+function renderLogSection() {
+  const session = activeSessionId ? currentSessions.get(activeSessionId) : null;
+  if (activeSessionId && session) {
+    startWorkoutWrap?.classList.add("hidden");
+    activeWorkoutWrap?.classList.remove("hidden");
+    if (workoutDateInput) workoutDateInput.value = session.date;
+    if ($("#active-workout-date-label")) $("#active-workout-date-label").textContent = "Workout: " + formatDateLabel(session.date);
+    const sets = getSetsForSession(activeSessionId);
+    const groups = groupSetsByExercise(sets);
+    activeWorkoutBody.innerHTML = [...groups.entries()].map(([, groupSets]) => {
+      const exName = groupSets[0]?.data?.exerciseName || "—";
+      return `<tr class="exercise-group-header"><td colspan="7">${escapeHtml(exName)}</td></tr>` +
+        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, false, true, i + 1)).join("");
+    }).join("");
+    refreshSupersetOptions();
+    activeWorkoutBody.querySelectorAll(".edit-set-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        editingWorkoutId = btn.getAttribute("data-id");
+        const d = currentWorkouts.get(editingWorkoutId);
+        if (d) {
+          $("#exercise-name").value = d.exerciseName ?? "";
+          $("#weight").value = d.weight ?? "";
+          $("#reps").value = d.reps ?? "";
+          supersetSelect.value = d.supersetWithId ?? "";
+          $("#notes").value = d.notes ?? "";
+        }
+        workoutCancelEditBtn?.classList.remove("hidden");
+        editIndicator?.classList.remove("hidden");
+        workoutSubmitBtn.textContent = "Update set";
+        setComparisonMessage("");
+      });
+    });
+  } else {
+    startWorkoutWrap?.classList.remove("hidden");
+    activeWorkoutWrap?.classList.add("hidden");
+  }
+}
+
+function refreshSupersetOptions() {
+  const sets = activeSessionId ? getSetsForSession(activeSessionId) : [];
+  const opts = ['<option value="">No superset</option>'];
+  sets.forEach(({ id, data }) => {
+    if (id === editingWorkoutId) return;
+    opts.push(`<option value="${id}">${escapeHtml((data.exerciseName || "") + ` (${data.weight ?? ""} kg × ${data.reps ?? ""})`)}</option>`);
+  });
+  supersetSelect.innerHTML = opts.join("");
 }
 
 document.getElementById("start-workout-btn")?.addEventListener("click", async () => {
   if (!currentUser) return;
-  const today = getTodayString();
-  setWorkoutError("");
   try {
-    const ref = await addDoc(collection(db, "workoutSessions"), {
-      userId: currentUser.uid,
-      date: today,
-      startedAt: serverTimestamp(),
-      endedAt: null,
-      durationMinutes: null,
-    });
-    await setDoc(doc(db, "sessions", currentUser.uid), {
-      activeSessionId: ref.id,
-      updatedAt: serverTimestamp(),
-    });
+    const ref = await addDoc(collection(db, "workoutSessions"), { userId: currentUser.uid, date: getTodayString(), startedAt: null, endedAt: null, durationMinutes: null });
+    await setDoc(doc(db, "sessions", currentUser.uid), { activeSessionId: ref.id, updatedAt: serverTimestamp() });
   } catch (e) {
     console.error(e);
     setWorkoutError("Failed to start workout.");
   }
 });
 
-finishWorkoutBtn?.addEventListener("click", async () => {
+$("#finish-workout-btn")?.addEventListener("click", async () => {
   if (!currentUser || !activeSessionId) return;
-  setWorkoutError("");
-  const sessionRef = doc(db, "workoutSessions", activeSessionId);
+  const sets = getSetsForSession(activeSessionId);
+  if (sets.length === 0) {
+    try {
+      await deleteDoc(doc(db, "workoutSessions", activeSessionId));
+      await setDoc(doc(db, "sessions", currentUser.uid), { activeSessionId: null, updatedAt: serverTimestamp() });
+      exitEditMode();
+    } catch (e) {
+      console.error(e);
+    }
+    return;
+  }
   try {
-    const snap = await getDoc(sessionRef);
+    const snap = await getDoc(doc(db, "workoutSessions", activeSessionId));
     const startedAt = snap.exists() ? snap.data().startedAt?.toDate?.() : null;
     const endTime = new Date();
-    const durationMinutes = startedAt
-      ? Math.max(0, Math.round((endTime.getTime() - startedAt.getTime()) / 60000))
-      : 0;
-    await updateDoc(sessionRef, {
-      endedAt: Timestamp.fromDate(endTime),
-      durationMinutes,
-    });
-    await setDoc(doc(db, "sessions", currentUser.uid), {
-      activeSessionId: null,
-      updatedAt: serverTimestamp(),
-    });
+    const durationMinutes = startedAt ? Math.max(0, Math.round((endTime - startedAt) / 60000)) : 0;
+    await updateDoc(doc(db, "workoutSessions", activeSessionId), { endedAt: Timestamp.fromDate(endTime), durationMinutes });
+    await setDoc(doc(db, "sessions", currentUser.uid), { activeSessionId: null, updatedAt: serverTimestamp() });
     exitEditMode();
   } catch (e) {
     console.error(e);
-    setWorkoutError("Failed to finish workout.");
   }
 });
 
-function getTodayString() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+// ----- Recent -----
+const recentDatesList = $("#recent-dates-list");
+const recentDatesView = $("#recent-dates-view");
+const recentDetailView = $("#recent-detail-view");
+const detailBackBtn = $("#detail-back-btn");
+
+function renderRecentSection() {
+  if (!recentDatesView || !recentDetailView) return;
+  if (selectedSessionId || selectedDateForDetail) {
+    recentDatesView.classList.add("hidden");
+    recentDetailView.classList.remove("hidden");
+    const dateLabel = selectedSessionId ? currentSessions.get(selectedSessionId)?.date : selectedDateForDetail;
+    $("#detail-date-label").textContent = "Workout: " + formatDateLabel(dateLabel || "");
+    $("#detail-workout-date").value = dateLabel || "";
+    const s = selectedSessionId ? currentSessions.get(selectedSessionId) : null;
+    $("#detail-session-meta").textContent = s ? [s.endedAt?.toDate?.()?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }), s.durationMinutes != null ? `${s.durationMinutes} min` : ""].filter(Boolean).join(" · ") || "—" : "Legacy";
+    const sets = selectedSessionId ? getSetsForSession(selectedSessionId) : getSetsForLegacyDate(selectedDateForDetail);
+    const detailBody = document.getElementById("detail-workout-body");
+    const groups = groupSetsByExercise(sets);
+    detailBody.innerHTML = [...groups.entries()].map(([, groupSets]) => {
+      const exName = groupSets[0]?.data?.exerciseName || "—";
+      return `<tr class="exercise-group-header"><td colspan="7">${escapeHtml(exName)}</td></tr>` +
+        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, true, true, i + 1)).join("");
+    }).join("");
+    detailBody.querySelectorAll(".edit-set-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        detailEditingId = btn.getAttribute("data-id");
+        const d = currentWorkouts.get(detailEditingId);
+        if (d) {
+          $("#detail-exercise-name").value = d.exerciseName ?? "";
+          $("#detail-weight").value = d.weight ?? "";
+          $("#detail-reps").value = d.reps ?? "";
+          $("#detail-superset-with").value = d.supersetWithId ?? "";
+          $("#detail-notes").value = d.notes ?? "";
+        }
+        $("#detail-add-set-btn").textContent = "Update set";
+      });
+    });
+    detailBody.querySelectorAll(".delete-set-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Delete this set?")) return;
+        try {
+          await deleteDoc(doc(db, "workouts", btn.getAttribute("data-id")));
+        } catch (err) { console.error(err); }
+      });
+    });
+  } else {
+    recentDatesView.classList.remove("hidden");
+    recentDetailView.classList.add("hidden");
+    const sessions = [...currentSessions.values()].sort((a, b) => (b.startedAt?.toMillis?.() ?? 0) - (a.startedAt?.toMillis?.() ?? 0));
+    const legacyDates = [...new Set([...currentWorkouts.values()].filter((d) => d.date && !d.sessionId).map((d) => d.date))].sort().reverse();
+    let html = "";
+    sessions.forEach((s) => {
+      html += `<li><button type="button" class="date-btn" data-session="${s.id}">${formatDateLabel(s.date)} · ${s.durationMinutes != null ? s.durationMinutes + " min" : ""}</button></li>`;
+    });
+    legacyDates.forEach((d) => {
+      if (!sessions.some((s) => s.date === d)) html += `<li><button type="button" class="date-btn" data-date="${d}">${formatDateLabel(d)} (legacy)</button></li>`;
+    });
+    recentDatesList.innerHTML = html || "<li class=\"muted\">No workouts yet.</li>";
+    recentDatesList.querySelectorAll(".date-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedSessionId = btn.getAttribute("data-session") || null;
+        selectedDateForDetail = btn.getAttribute("data-date") || null;
+        renderRecentSection();
+      });
+    });
+  }
 }
 
 detailBackBtn?.addEventListener("click", () => {
@@ -455,570 +669,277 @@ detailBackBtn?.addEventListener("click", () => {
   renderRecentSection();
 });
 
-detailWorkoutForm?.addEventListener("submit", async (e) => {
+$("#detail-workout-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!currentUser) return;
-  const date = selectedSessionId
-    ? currentSessions.get(selectedSessionId)?.date
-    : selectedDateForDetail;
+  const date = selectedSessionId ? currentSessions.get(selectedSessionId)?.date : selectedDateForDetail;
   if (!date) return;
-  if (detailWorkoutError) {
-    detailWorkoutError.textContent = "";
-    detailWorkoutError.classList.add("hidden");
-  }
-  const exerciseName = detailExerciseName?.value?.trim() ?? "";
-  const weight = parseFloat(detailWeight?.value);
-  const reps = parseInt(detailReps?.value, 10);
-  const supersetWithId = detailSupersetWith?.value || null;
-  const notes = detailNotes?.value?.trim() || null;
+  const exerciseName = $("#detail-exercise-name")?.value?.trim();
+  const weight = parseFloat($("#detail-weight")?.value);
+  const reps = parseInt($("#detail-reps")?.value, 10);
+  const supersetWithId = $("#detail-superset-with")?.value || null;
+  const notes = $("#detail-notes")?.value?.trim();
   if (!exerciseName || Number.isNaN(weight) || Number.isNaN(reps)) return;
-  const exerciseKey = normalizeExerciseKey(exerciseName);
-  const payload = {
-    userId: currentUser.uid,
-    date,
-    exerciseName,
-    exerciseKey,
-    weight,
-    reps,
-    supersetWithId,
-    notes,
-    ...(selectedSessionId ? { sessionId: selectedSessionId } : {}),
-  };
+  const payload = { userId: currentUser.uid, date, exerciseName, exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithId, notes: notes || null };
   try {
     if (detailEditingId) {
       await updateDoc(doc(db, "workouts", detailEditingId), { ...payload, updatedAt: serverTimestamp() });
       detailEditingId = null;
-      detailWorkoutForm.reset();
-      const detailAddSetBtn = document.getElementById("detail-add-set-btn");
-      if (detailAddSetBtn) detailAddSetBtn.textContent = "Add set";
+      $("#detail-add-set-btn").textContent = "Add set";
     } else {
-      await addDoc(collection(db, "workouts"), { ...payload, createdAt: serverTimestamp() });
-      detailWorkoutForm.reset();
+      await addDoc(collection(db, "workouts"), { ...payload, sessionId: selectedSessionId || null, createdAt: serverTimestamp() });
     }
-    refreshDetailSupersetOptions();
-    renderDetailBody();
+    $("#detail-workout-form").reset();
+    renderRecentSection();
   } catch (err) {
     console.error(err);
-    if (detailWorkoutError) {
-      detailWorkoutError.textContent = "Failed to save.";
-      detailWorkoutError.classList.remove("hidden");
-    }
+    $("#detail-workout-error").textContent = "Failed to save.";
   }
 });
 
-function subscribeToWorkouts(userId) {
-  if (unsubscribeWorkouts) {
-    unsubscribeWorkouts();
-    unsubscribeWorkouts = null;
-  }
-
-  const q = query(
-    collection(db, "workouts"),
-    where("userId", "==", userId),
-  );
-
-  unsubscribeWorkouts = onSnapshot(
-    q,
-    (snapshot) => {
-      currentWorkouts = new Map();
-      snapshot.forEach((docSnap) => {
-        currentWorkouts.set(docSnap.id, docSnap.data());
-      });
-      renderLogSection();
-      renderRecentSection();
-      renderStatsSection();
-      highlightedSupersetRowId = null;
-    },
-    (error) => {
-      console.error(error);
-      setWorkoutError("Failed to load workouts.");
-    },
-  );
-}
-
-function renderLogSection() {
-  if (!startWorkoutWrap || !activeWorkoutWrap) return;
-  const session = activeSessionId ? currentSessions.get(activeSessionId) : null;
-  if (activeSessionId && session) {
-    startWorkoutWrap.classList.add("hidden");
-    activeWorkoutWrap.classList.remove("hidden");
-    const date = session.date;
-    if (workoutDateInput) workoutDateInput.value = date;
-    if (activeWorkoutDateLabel) activeWorkoutDateLabel.textContent = "Workout: " + formatDateLabel(date);
-    renderActiveBody();
-    refreshSupersetOptions();
-  } else {
-    startWorkoutWrap.classList.remove("hidden");
-    activeWorkoutWrap.classList.add("hidden");
-  }
-}
-
-function renderActiveBody() {
-  if (!activeWorkoutBody || !activeSessionId) return;
-  const sets = getSetsForSession(activeSessionId);
-  activeWorkoutBody.innerHTML = sets.map(({ id, data }) => renderWorkoutRow(id, data)).join("");
-}
-
-function getSetsForSession(sessionId) {
-  const list = [];
-  currentWorkouts.forEach((data, id) => {
-    if (data.sessionId === sessionId) list.push({ id, data });
-  });
-  list.sort((a, b) => {
-    const tA = a.data.createdAt?.toMillis?.() ?? 0;
-    const tB = b.data.createdAt?.toMillis?.() ?? 0;
-    return tA - tB;
-  });
-  return list;
-}
-
-function getSetsForLegacyDate(date) {
-  const list = [];
-  currentWorkouts.forEach((data, id) => {
-    if (data.date === date && !data.sessionId) list.push({ id, data });
-  });
-  list.sort((a, b) => {
-    const tA = a.data.createdAt?.toMillis?.() ?? 0;
-    const tB = b.data.createdAt?.toMillis?.() ?? 0;
-    return tA - tB;
-  });
-  return list;
-}
-
-function renderRecentSection() {
-  if (!recentDatesView || !recentDetailView) return;
-  if (selectedSessionId || selectedDateForDetail) {
-    recentDatesView.classList.add("hidden");
-    recentDetailView.classList.remove("hidden");
-    const dateLabel = selectedSessionId
-      ? currentSessions.get(selectedSessionId)?.date
-      : selectedDateForDetail;
-    if (detailDateLabel) detailDateLabel.textContent = "Workout: " + formatDateLabel(dateLabel || "");
-    if (detailWorkoutDate) detailWorkoutDate.value = dateLabel || "";
-    if (detailSessionMeta) {
-      if (selectedSessionId) {
-        const s = currentSessions.get(selectedSessionId);
-        const endLabel = s?.endedAt?.toDate?.()
-          ? formatTime(s.endedAt.toDate())
-          : "";
-        const dur = s?.durationMinutes != null ? `${s.durationMinutes} min` : "";
-        detailSessionMeta.textContent = [endLabel, dur].filter(Boolean).join(" · ") || "—";
-      } else {
-        detailSessionMeta.textContent = "Legacy (no time/duration)";
-      }
-    }
-    const detailAddSetBtn = document.getElementById("detail-add-set-btn");
-    if (detailAddSetBtn) detailAddSetBtn.textContent = "Add set";
-    renderDetailBody();
-    refreshDetailSupersetOptions();
-  } else {
-    recentDatesView.classList.remove("hidden");
-    recentDetailView.classList.add("hidden");
-    renderRecentSessionsList();
-  }
-}
-
-function formatTime(date) {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
+// ----- Stats -----
 function renderStatsSection() {
-  const overviewEl = document.getElementById("stats-overview");
-  const activityEl = document.getElementById("stats-activity");
-  const exercisesEl = document.getElementById("stats-exercises");
-  const volumeEl = document.getElementById("stats-volume");
-  if (!overviewEl || !activityEl || !exercisesEl || !volumeEl) return;
-
+  const overview = $("#stats-overview");
+  const activity = $("#stats-activity");
+  const exercises = $("#stats-exercises");
+  const volume = $("#stats-volume");
+  if (!overview || !activity || !exercises || !volume) return;
   const now = new Date();
   const today = getTodayString();
-  const sevenDaysAgo = new Date(now);
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-  const thirtyDaysAgo = new Date(now);
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const toDateStr = (d) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
-  const sevenDaysAgoStr = toDateStr(sevenDaysAgo);
-  const thirtyDaysAgoStr = toDateStr(thirtyDaysAgo);
-
-  const finishedSessions = [...currentSessions.values()].filter((s) => s.endedAt != null);
-  const legacyDates = new Set(
-    [...currentWorkouts.values()].filter((d) => d.date && !d.sessionId).map((d) => d.date),
-  );
-  const totalSessions = finishedSessions.length + legacyDates.size;
-  const totalSets = currentWorkouts.size;
-  let totalVolume = 0;
-  const exerciseCounts = new Map();
-  const exerciseVolume = new Map();
-  currentWorkouts.forEach((data) => {
-    const w = data.weight != null ? Number(data.weight) : 0;
-    const r = data.reps != null ? Number(data.reps) : 0;
-    totalVolume += w * r;
-    const key = data.exerciseKey || data.exerciseName || "—";
-    const name = data.exerciseName || "—";
-    exerciseCounts.set(key, (exerciseCounts.get(key) || 0) + 1);
-    const vol = (exerciseVolume.get(key) || { name, volume: 0 });
-    vol.volume += w * r;
-    vol.name = name;
-    exerciseVolume.set(key, vol);
+  const sevenDaysAgo = new Date(now); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const thirtyDaysAgo = new Date(now); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  let totalWorkouts = 0, totalSets = 0, totalVolume = 0, days7 = 0, days30 = 0;
+  const dateSet = new Set();
+  const exCount = new Map();
+  const exVolume = new Map();
+  currentWorkouts.forEach((d) => {
+    totalSets++;
+    const v = (d.weight ?? 0) * (d.reps ?? 0);
+    totalVolume += v;
+    if (d.date) dateSet.add(d.date);
+    const k = d.exerciseKey || d.exerciseName || "";
+    exCount.set(k, (exCount.get(k) ?? 0) + 1);
+    exVolume.set(k, (exVolume.get(k) ?? 0) + v);
   });
-
-  const sessionsThisWeek = finishedSessions.filter((s) => s.date >= sevenDaysAgoStr).length;
-  const sessionsThisMonth = finishedSessions.filter((s) => s.date >= thirtyDaysAgoStr).length;
-  const legacyThisWeek = [...legacyDates].filter((d) => d >= sevenDaysAgoStr).length;
-  const legacyThisMonth = [...legacyDates].filter((d) => d >= thirtyDaysAgoStr).length;
-
-  overviewEl.innerHTML = `
-    <div class="stats-card"><div class="value">${totalSessions}</div><div class="label">Total workouts</div></div>
-    <div class="stats-card"><div class="value">${totalSets}</div><div class="label">Total sets</div></div>
-    <div class="stats-card"><div class="value">${totalVolume.toLocaleString()}</div><div class="label">Total volume (kg×reps)</div></div>
-  `;
-
-  activityEl.innerHTML = `
-    <p class="muted">Last 7 days: ${sessionsThisWeek + legacyThisWeek} workout(s) · Last 30 days: ${sessionsThisMonth + legacyThisMonth} workout(s)</p>
-  `;
-
-  const topExercises = [...exerciseCounts.entries()]
-    .map(([key, count]) => ({ count, name: exerciseVolume.get(key)?.name || key }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 15);
-  exercisesEl.innerHTML = `
-    <ul>${topExercises.map((e) => `<li><span>${escapeHtml(e.name)}</span><strong>${e.count}</strong></li>`).join("")}</ul>
-  `;
-
-  const topVolume = [...exerciseVolume.entries()]
-    .map(([key, v]) => ({ key, ...v }))
-    .sort((a, b) => b.volume - a.volume)
-    .slice(0, 15);
-  volumeEl.innerHTML = `
-    <ul>${topVolume.map((v) => `<li><span>${escapeHtml(v.name)}</span><strong>${v.volume.toLocaleString()}</strong></li>`).join("")}</ul>
-  `;
-}
-
-function renderRecentSessionsList() {
-  if (!recentDatesList) return;
-  const items = [];
-  const endedSessions = [...currentSessions.values()]
-    .filter((s) => s.endedAt != null)
-    .sort((a, b) => {
-      const tA = a.endedAt?.toMillis?.() ?? 0;
-      const tB = b.endedAt?.toMillis?.() ?? 0;
-      return tB - tA;
-    });
-  endedSessions.forEach((s) => {
-    const endStr = s.endedAt?.toDate?.() ? formatTime(s.endedAt.toDate()) : "";
-    const durStr = s.durationMinutes != null ? `${s.durationMinutes} min` : "";
-    const label = [formatDateLabel(s.date), endStr, durStr].filter(Boolean).join(" — ");
-    items.push(`<li><button type="button" data-view-session="${escapeHtml(s.id)}">${escapeHtml(label)}</button></li>`);
+  totalWorkouts = dateSet.size;
+  dateSet.forEach((d) => {
+    const t = new Date(d + "T12:00:00").getTime();
+    if (t >= sevenDaysAgo.getTime()) days7++;
+    if (t >= thirtyDaysAgo.getTime()) days30++;
   });
-  const legacyDates = [...new Set(
-    [...currentWorkouts.values()].filter((d) => d.date && !d.sessionId).map((d) => d.date),
-  )].sort((a, b) => (a < b ? 1 : -1));
-  legacyDates.forEach((d) => {
-    items.push(`<li><button type="button" data-view-date="${escapeHtml(d)}">${escapeHtml(formatDateLabel(d))} (legacy)</button></li>`);
-  });
-  recentDatesList.innerHTML = items.join("");
+  overview.innerHTML = `
+    <div class="stats-card"><div class="value">${totalWorkouts}</div><div class="label">Workouts</div></div>
+    <div class="stats-card"><div class="value">${totalSets}</div><div class="label">Sets</div></div>
+    <div class="stats-card"><div class="value">${Math.round(totalVolume)}</div><div class="label">Volume (kg)</div></div>
+    <div class="stats-card"><div class="value">${days7}/${7}</div><div class="label">7d active</div></div>
+    <div class="stats-card"><div class="value">${days30}/30</div><div class="label">30d active</div></div>`;
+  activity.innerHTML = `<p class="muted">${days7} days in last 7, ${days30} in last 30.</p>`;
+  const topEx = [...exCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  exercises.innerHTML = topEx.map(([k, v]) => `<li><span>${escapeHtml(k || "—")}</span> <span>${v} sets</span></li>`).join("") || "<li class=\"muted\">No data</li>";
+  const topVol = [...exVolume.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  volume.innerHTML = topVol.map(([k, v]) => `<li><span>${escapeHtml(k || "—")}</span> <span>${Math.round(v)} kg</span></li>`).join("") || "<li class=\"muted\">No data</li>";
 }
 
-function renderDetailBody() {
-  if (!detailWorkoutBody) return;
-  const sets = selectedSessionId
-    ? getSetsForSession(selectedSessionId)
-    : selectedDateForDetail
-      ? getSetsForLegacyDate(selectedDateForDetail)
-      : [];
-  detailWorkoutBody.innerHTML = sets.map(({ id, data }) => renderWorkoutRow(id, data)).join("");
-}
-
-function refreshDetailSupersetOptions() {
-  if (!detailSupersetWith) return;
-  const options = ['<option value="">No superset</option>'];
-  const sets = selectedSessionId
-    ? getSetsForSession(selectedSessionId)
-    : selectedDateForDetail
-      ? getSetsForLegacyDate(selectedDateForDetail)
-      : [];
-  sets.forEach(({ id, data }) => {
-    if (id === detailEditingId) return;
-    const name = data.exerciseName || "Exercise";
-    const w = data.weight != null && data.reps != null ? ` (${data.weight} kg x ${data.reps})` : "";
-    options.push(`<option value="${id}">${escapeHtml(name + w)}</option>`);
-  });
-  detailSupersetWith.innerHTML = options.join("");
-  if (detailEditingId && currentWorkouts.has(detailEditingId)) {
-    const data = currentWorkouts.get(detailEditingId);
-    detailSupersetWith.value = data.supersetWithId ?? "";
-  }
-}
-
-function renderSessionHeaderRow(date) {
-  const label = date ? formatDateLabel(date) : "Unknown date";
-  return `
-    <tr class="session-header-row">
-      <th colspan="6">${escapeHtml(label)}</th>
-    </tr>
-  `;
-}
-
-function renderWorkoutRow(id, data) {
-  const exercise = data.exerciseName ?? "";
-  const weight = data.weight != null ? `${data.weight} kg` : "";
-  const reps = data.reps != null ? `${data.reps}` : "";
-  const partnerId = data.supersetWithId ?? "";
-  const supersetLabel = getSupersetLabel(partnerId, data);
-  const notes = data.notes ?? "";
-
-  return `
-    <tr data-id="${id}">
-      <td>${escapeHtml(exercise)}</td>
-      <td>${escapeHtml(weight)}</td>
-      <td>${escapeHtml(reps)}</td>
-      <td class="superset-cell" data-superset-target="${partnerId}">
-        ${escapeHtml(supersetLabel)}
-      </td>
-      <td>${escapeHtml(notes)}</td>
-      <td class="workout-actions">
-        <button type="button" data-edit-id="${id}">Edit</button>
-      </td>
-    </tr>
-  `;
-}
-
-recentDatesList?.addEventListener("click", (event) => {
-  const sessionBtn = event.target.closest("[data-view-session]");
-  const dateBtn = event.target.closest("[data-view-date]");
-  if (sessionBtn) {
-    selectedSessionId = sessionBtn.getAttribute("data-view-session");
-    selectedDateForDetail = currentSessions.get(selectedSessionId)?.date ?? null;
-  } else if (dateBtn) {
-    selectedSessionId = null;
-    selectedDateForDetail = dateBtn.getAttribute("data-view-date");
-  } else return;
-  renderRecentSection();
-});
-
-appSection?.addEventListener("click", (event) => {
-  const supersetCell = event.target.closest("[data-superset-target]");
-  if (supersetCell) {
-    const targetId = supersetCell.getAttribute("data-superset-target");
-    highlightSupersetRow(targetId);
-    return;
-  }
-
-  const editBtn = event.target.closest("[data-edit-id]");
-  if (!editBtn) return;
-  const id = editBtn.getAttribute("data-edit-id");
-  const data = currentWorkouts.get(id);
-  if (!data) return;
-  const tbody = editBtn.closest("tbody");
-  if (tbody?.id === "detail-workout-body") {
-    enterDetailEditMode(id, data);
-  } else {
-    enterEditMode(id, data);
-  }
-});
-
-function formatDateLabel(dateStr) {
-  // Expecting YYYY-MM-DD; fall back to raw string if parsing fails.
-  const [year, month, day] = dateStr.split("-");
-  if (!year || !month || !day) return dateStr;
-  const date = new Date(Number(year), Number(month) - 1, Number(day));
-  if (Number.isNaN(date.getTime())) return dateStr;
-
-  const formatter = new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  return formatter.format(date);
-}
-
-function enterEditMode(id, data) {
-  detailEditingId = null;
-  editingWorkoutId = id;
-  workoutDateInput.value = data.date ?? "";
-  document.getElementById("exercise-name").value = data.exerciseName ?? "";
-  document.getElementById("weight").value =
-    data.weight != null ? data.weight : "";
-  document.getElementById("reps").value =
-    data.reps != null ? data.reps : "";
-  document.getElementById("notes").value = data.notes ?? "";
-
-  refreshSupersetOptions(data.supersetWithId ?? null);
-
-  workoutSubmitBtn.textContent = "Update set";
-  workoutCancelEditBtn.classList.remove("hidden");
-  editIndicator.classList.remove("hidden");
-}
-
-function enterDetailEditMode(id, data) {
-  editingWorkoutId = null;
-  exitEditMode();
-  detailEditingId = id;
-  if (detailExerciseName) detailExerciseName.value = data.exerciseName ?? "";
-  if (detailWeight) detailWeight.value = data.weight != null ? data.weight : "";
-  if (detailReps) detailReps.value = data.reps != null ? data.reps : "";
-  if (detailNotes) detailNotes.value = data.notes ?? "";
-  refreshDetailSupersetOptions();
-  if (detailSupersetWith) detailSupersetWith.value = data.supersetWithId ?? "";
-  const detailBtn = document.getElementById("detail-add-set-btn");
-  if (detailBtn) detailBtn.textContent = "Update set";
-}
-
-function exitEditMode() {
-  editingWorkoutId = null;
-  workoutForm.reset();
-  setDefaultDate();
-  workoutSubmitBtn.textContent = "Add set";
-  workoutCancelEditBtn.classList.add("hidden");
-  editIndicator.classList.add("hidden");
-}
-
-async function showComparisonAfterAdd(newDocId, exerciseKey, weight, reps) {
-  if (!comparisonMessageEl || !currentUser) return;
-
-  setComparisonMessage("");
-
-  const workoutsRef = collection(db, "workouts");
-  const q = query(
-    workoutsRef,
-    where("userId", "==", currentUser.uid),
-    where("exerciseKey", "==", exerciseKey),
-    orderBy("createdAt", "desc"),
-    limit(2),
-  );
-
+// ----- Profile -----
+async function loadProfile(userId) {
   try {
-    const snapshot = await getDocs(q);
-    const docs = snapshot.docs;
-    if (docs.length < 2) {
-      setComparisonMessage("First time logging this exercise.", true);
-      return;
-    }
-
-    const first = docs[0];
-    const second = docs[1];
-    const isNewFirst = first.id === newDocId;
-    const previous = isNewFirst ? second : first;
-    const prevData = previous.data();
-    const prevWeight = prevData.weight;
-    const prevReps = prevData.reps;
-    const prevDate = prevData.date;
-
-    const weightUp = prevWeight != null && weight > prevWeight;
-    const weightSame =
-      prevWeight != null && weight === prevWeight;
-    const repsUp = prevReps != null && reps > prevReps;
-    const repsSame = prevReps != null && reps === prevReps;
-
-    const prevLabel =
-      prevDate && prevWeight != null && prevReps != null
-        ? `${prevWeight} kg × ${prevReps} (${formatDateLabel(prevDate)})`
-        : prevWeight != null && prevReps != null
-          ? `${prevWeight} kg × ${prevReps}`
-          : "last time";
-
-    let msg = `Last time: ${prevLabel}. This set: ${weight} kg × ${reps}. `;
-    if (weightUp && repsUp) msg += "More weight and more reps.";
-    else if (weightUp) msg += "More weight.";
-    else if (repsUp) msg += "More reps.";
-    else if (weightSame && repsSame) msg += "Same as last time.";
-    else if (weightUp === false && repsUp === false && (weight !== prevWeight || reps !== prevReps)) msg += "Different set.";
-    else msg += "Nice.";
-
-    setComparisonMessage(msg, true);
+    const snap = await getDoc(doc(db, "profiles", userId));
+    const d = snap.exists() ? snap.data() : {};
+    $("#profile-display-name").value = d.displayName ?? "";
+    $("#profile-height").value = d.height ?? "";
+    $("#profile-body-weight").value = d.bodyWeight ?? "";
+    $("#profile-weight-unit").value = d.weightUnit ?? "kg";
+    $("#profile-birth-year").value = d.birthYear ?? "";
   } catch (err) {
-    if (err.code === "failed-precondition") {
-      // Index may still be building; comparison will work once it's ready.
-    }
+    console.error(err);
   }
 }
 
-function setComparisonMessage(text, clearAfter5s = false, indexUrl = null) {
-  if (!comparisonMessageEl) return;
-  if (!text && !indexUrl) {
-    comparisonMessageEl.innerHTML = "";
-    comparisonMessageEl.classList.add("hidden");
-    return;
+$("#profile-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) return;
+  const payload = {
+    displayName: $("#profile-display-name")?.value?.trim() || null,
+    height: $("#profile-height")?.value ? parseFloat($("#profile-height").value) : null,
+    bodyWeight: $("#profile-body-weight")?.value ? parseFloat($("#profile-body-weight").value) : null,
+    weightUnit: $("#profile-weight-unit")?.value || "kg",
+    birthYear: $("#profile-birth-year")?.value ? parseInt($("#profile-birth-year").value, 10) : null,
+    updatedAt: serverTimestamp(),
+  };
+  try {
+    await setDoc(doc(db, "profiles", currentUser.uid), payload, { merge: true });
+    $("#profile-success").textContent = "Profile saved.";
+    $("#profile-success").classList.remove("hidden");
+    setTimeout(() => $("#profile-success").classList.add("hidden"), 3000);
+  } catch (err) {
+    console.error(err);
+    $("#profile-error").textContent = "Failed to save.";
+    $("#profile-error").classList.remove("hidden");
   }
-  if (indexUrl) {
-    comparisonMessageEl.innerHTML =
-      escapeHtml(text) +
-      ' <a href="' +
-      escapeHtml(indexUrl) +
-      '" target="_blank" rel="noopener">Create index</a>';
-  } else {
-    comparisonMessageEl.textContent = text;
-  }
-  comparisonMessageEl.classList.remove("hidden");
-  if (clearAfter5s) {
-    setTimeout(() => setComparisonMessage(""), 5000);
-  }
-}
+});
 
-function refreshSupersetOptions(selectedId = null) {
-  if (!supersetSelect) return;
-  const currentSelected =
-    selectedId !== null ? selectedId : supersetSelect.value || "";
-  const options = ['<option value="">No superset</option>'];
-  const sessionSets = activeSessionId
-    ? getSetsForSession(activeSessionId)
-    : [];
-  sessionSets.forEach(({ id, data }) => {
-    if (id === editingWorkoutId) return;
-    const name = data.exerciseName || "Exercise";
-    const w =
-      data.weight != null && data.reps != null
-        ? ` (${data.weight} kg x ${data.reps})`
-        : "";
-    options.push(`<option value="${id}">${escapeHtml(name + w)}</option>`);
+// ----- Competition -----
+function subscribeToCompetitions() {
+  unsubscribeCompetitions?.();
+  const q = query(collection(db, "competitions"), where("status", "==", "open"));
+  unsubscribeCompetitions = onSnapshot(q, (snap) => {
+    currentCompetitions = new Map();
+    const now = Date.now();
+    snap.forEach((d) => {
+      const data = d.data();
+      if ((data.endsAt?.toMillis?.() ?? 0) > now) currentCompetitions.set(d.id, { id: d.id, ...data });
+    });
+    renderCompetitionSection();
+    renderCompetitionSubmitOptions();
   });
-  supersetSelect.innerHTML = options.join("");
-  if (currentSelected) supersetSelect.value = currentSelected;
 }
 
-function getSupersetLabel(partnerId, data) {
-  // Prefer the linked set, fall back to any legacy `superset` label.
-  if (partnerId && currentWorkouts.has(partnerId)) {
-    const partner = currentWorkouts.get(partnerId);
-    return partner.exerciseName || "Superset";
+function subscribeToParticipations(userId) {
+  unsubscribeParticipations?.();
+  const q = query(collection(db, "competitionParticipants"), where("userId", "==", userId));
+  unsubscribeParticipations = onSnapshot(q, (snap) => {
+    myParticipations = new Map();
+    snap.forEach((d) => myParticipations.set(d.data().competitionId, { id: d.id, ...d.data() }));
+    renderCompetitionSection();
+    renderCompetitionSubmitOptions();
+  });
+}
+
+function renderCompetitionSection() {
+  const list = $("#competition-list");
+  if (!list) return;
+  const comps = [...currentCompetitions.values()].sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+  list.innerHTML = comps.length === 0 ? '<li class="muted">No open competitions.</li>' : comps.map((c) => {
+    const joined = myParticipations.has(c.id);
+    const ends = c.endsAt?.toDate?.().toLocaleString();
+    return `<li class="competition-item"><div><strong>${escapeHtml(c.exerciseName || "")}</strong> <span class="muted">· ends ${ends || "—"}</span></div><button type="button" class="comp-view-btn" data-id="${c.id}">${joined ? "View" : "Join"}</button></li>`;
+  }).join("");
+  list.querySelectorAll(".comp-view-btn").forEach((btn) => btn.addEventListener("click", () => showCompetitionDetail(btn.getAttribute("data-id"))));
+}
+
+function showCompetitionDetail(compId) {
+  selectedCompetitionId = compId;
+  const comp = currentCompetitions.get(compId);
+  if (!comp) return;
+  $("#competition-list-view").classList.add("hidden");
+  $("#competition-detail-view").classList.remove("hidden");
+  $("#comp-detail-title").textContent = comp.exerciseName || "Competition";
+  $("#comp-detail-meta").textContent = comp.endsAt?.toDate ? "Ends " + comp.endsAt.toDate().toLocaleString() : "";
+  const isCreator = comp.createdBy === currentUser?.uid;
+  const joined = myParticipations.has(compId);
+  $("#comp-join-btn").classList.toggle("hidden", joined || isCreator);
+  $("#comp-close-btn").classList.toggle("hidden", !isCreator);
+  renderCompetitionLeaderboard(compId);
+}
+
+async function renderCompetitionLeaderboard(compId) {
+  const el = $("#comp-leaderboard");
+  if (!el) return;
+  const snap = await getDocs(query(collection(db, "competitionParticipants"), where("competitionId", "==", compId)));
+  const parts = snap.docs.map((d) => d.data()).filter((p) => p.bestVolume > 0).sort((a, b) => b.bestVolume - a.bestVolume);
+  el.innerHTML = parts.length === 0 ? '<p class="muted">No submissions yet.</p>' : `<ol class="comp-leaderboard-list">${parts.map((p, i) => `<li>#${i + 1} ${escapeHtml(p.userEmail || "")} · ${p.bestWeight ?? 0} kg × ${p.bestReps ?? 0} = ${p.bestVolume ?? 0} pts</li>`).join("")}</ol>`;
+}
+
+$("#comp-back-btn")?.addEventListener("click", () => {
+  selectedCompetitionId = null;
+  $("#competition-list-view").classList.remove("hidden");
+  $("#competition-detail-view").classList.add("hidden");
+});
+
+$("#comp-join-btn")?.addEventListener("click", async () => {
+  if (!currentUser || !selectedCompetitionId) return;
+  try {
+    await addDoc(collection(db, "competitionParticipants"), { competitionId: selectedCompetitionId, userId: currentUser.uid, userEmail: currentUser.email ?? "", joinedAt: serverTimestamp(), submissions: [], bestVolume: null, bestWeight: null, bestReps: null });
+    showCompetitionDetail(selectedCompetitionId);
+  } catch (err) { console.error(err); }
+});
+
+$("#comp-close-btn")?.addEventListener("click", async () => {
+  if (!currentUser || !selectedCompetitionId) return;
+  const comp = currentCompetitions.get(selectedCompetitionId);
+  if (comp?.createdBy !== currentUser.uid) return;
+  try {
+    await updateDoc(doc(db, "competitions", selectedCompetitionId), { status: "closed", closedAt: serverTimestamp() });
+    $("#comp-back-btn").click();
+  } catch (err) { console.error(err); }
+});
+
+$("#create-competition-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentUser) return;
+  const name = $("#comp-exercise-name")?.value?.trim();
+  if (!name) return;
+  try {
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    await addDoc(collection(db, "competitions"), { createdBy: currentUser.uid, createdByEmail: currentUser.email ?? "", exerciseName: name, exerciseKey: normalizeExerciseKey(name), createdAt: serverTimestamp(), endsAt: Timestamp.fromDate(endsAt), status: "open" });
+    $("#comp-exercise-name").value = "";
+  } catch (err) { console.error(err); }
+});
+
+function renderCompetitionSubmitOptions() {
+  const wrap = $("#competition-submit-wrap");
+  const list = $("#competition-submit-list");
+  if (!wrap || !list) return;
+  let exerciseKey, weight, reps;
+  if (lastAddedSet) {
+    exerciseKey = lastAddedSet.exerciseKey;
+    weight = lastAddedSet.weight;
+    reps = lastAddedSet.reps;
+  } else {
+    const ex = $("#exercise-name")?.value?.trim();
+    weight = parseFloat($("#weight")?.value);
+    reps = parseInt($("#reps")?.value, 10);
+    if (!ex || Number.isNaN(weight) || Number.isNaN(reps)) { wrap.classList.add("hidden"); return; }
+    exerciseKey = normalizeExerciseKey(ex);
   }
-  return data.superset ?? "";
+  const matching = [];
+  myParticipations.forEach((p, compId) => {
+    const comp = currentCompetitions.get(compId);
+    if (!comp || comp.exerciseKey !== exerciseKey) return;
+    if ((p.submissions || []).length >= 3) return;
+    matching.push({ comp, p });
+  });
+  if (matching.length === 0) { wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  list.innerHTML = matching.map(({ comp }) => {
+    const part = myParticipations.get(comp.id);
+    const left = 3 - (part?.submissions?.length ?? 0);
+    return `<div class="comp-submit-item"><button type="button" class="comp-submit-btn" data-id="${comp.id}">Submit ${weight} kg × ${reps} reps to "${escapeHtml(comp.exerciseName)}" (${left}/3 left)</button></div>`;
+  }).join("");
+  list.querySelectorAll(".comp-submit-btn").forEach((btn) => btn.addEventListener("click", () => submitToCompetition(btn.getAttribute("data-id"), weight, reps)));
 }
 
-function highlightSupersetRow(targetId) {
-  if (!targetId) return;
-
-  if (highlightedSupersetRowId) {
-    const prev = document.querySelector(
-      `tr[data-id="${highlightedSupersetRowId}"]`,
-    );
-    if (prev) prev.classList.remove("superset-highlight");
-  }
-
-  const row = document.querySelector(`tr[data-id="${targetId}"]`);
-  if (!row) return;
-
-  row.classList.add("superset-highlight");
-  highlightedSupersetRowId = targetId;
-
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
+function offerCompetitionSubmit(exerciseKey, weight, reps) {
+  renderCompetitionSubmitOptions();
 }
 
-function escapeHtml(str) {
-  if (str == null) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+async function submitToCompetition(compId, weight, reps) {
+  if (!currentUser) return;
+  const part = myParticipations.get(compId);
+  if (!part || (part.submissions || []).length >= 3) return;
+  const volume = weight * reps;
+  try {
+    const ref = doc(db, "competitionParticipants", part.id);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.exists() ? snap.data() : {};
+      const subs = data.submissions || [];
+      if (subs.length >= 3) return;
+      let bestVolume = data.bestVolume ?? 0, bestWeight = data.bestWeight, bestReps = data.bestReps;
+      if (volume > bestVolume) { bestVolume = volume; bestWeight = weight; bestReps = reps; }
+      tx.update(ref, { submissions: [...subs, { weight, reps, submittedAt: serverTimestamp() }], bestVolume, bestWeight, bestReps });
+    });
+    lastAddedSet = null;
+    $("#competition-submit-wrap")?.classList.add("hidden");
+  } catch (err) { console.error(err); }
 }
 
+$("#comp-submit-dismiss")?.addEventListener("click", () => { lastAddedSet = null; $("#competition-submit-wrap")?.classList.add("hidden"); });
+
+["exercise-name", "weight", "reps"].forEach((id) => {
+  document.getElementById(id)?.addEventListener("input", renderCompetitionSubmitOptions);
+});
+
+// ----- Init -----
+initRouter();

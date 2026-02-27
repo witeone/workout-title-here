@@ -3,113 +3,62 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Workout Log</title>
+    <title>Workout title here</title>
     <link rel="stylesheet" href="./styles.css" />
-    <!-- Minimal, modern base styling -->
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/@picocss/pico@2.0.0-rc1/css/pico.min.css"
-    />
+    <link rel="stylesheet" href="https://unpkg.com/@picocss/pico@2.0.0-rc1/css/pico.min.css" />
   </head>
   <body>
     <main class="container">
       <header class="app-header">
-        <div>
-          <h1>Workout Log</h1>
-          <p class="muted">
-            Track your sessions with Firebase login & storage.
-          </p>
-        </div>
-        <div id="user-info" class="user-info hidden">
-          <span id="user-email"></span>
-          <button id="logout-btn" class="secondary outline">Log out</button>
+        <a href="/log" class="brand" data-route="/log">
+          <h1>Workout title here</h1>
+          <p class="tagline muted">Track sets, compare progress, build consistency</p>
+        </a>
+        <div class="header-nav hidden" id="header-logged-in">
+          <nav id="app-nav" class="app-nav" role="navigation" aria-label="Main">
+            <a href="/log" data-route="/log">Log</a>
+            <a href="/recent" data-route="/recent">Recent</a>
+            <a href="/exercises" data-route="/exercises">Exercises</a>
+            <a href="/stats" data-route="/stats">Stats</a>
+            <a href="/profile" data-route="/profile">Profile</a>
+            <a href="/competition" data-route="/competition">Competition</a>
+          </nav>
+          <div class="user-info">
+            <span id="user-email" class="user-email"></span>
+            <button id="logout-btn" class="logout-btn" type="button">Log out</button>
+          </div>
         </div>
       </header>
 
-      <section id="auth-section">
-        <article>
-          <nav class="tab-nav">
-            <button
-              id="login-tab"
-              class="tab active"
-              type="button"
-              data-target="login-form"
-            >
-              Log in
-            </button>
-            <button
-              id="signup-tab"
-              class="tab"
-              type="button"
-              data-target="signup-form"
-            >
-              Sign up
-            </button>
-          </nav>
-
-          <form id="login-form" class="auth-form" data-mode="login">
-            <label>
-              Email
-              <input
-                type="email"
-                id="login-email"
-                name="email"
-                autocomplete="email"
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                id="login-password"
-                name="password"
-                autocomplete="current-password"
-                minlength="6"
-                required
-              />
-            </label>
-            <button type="submit">Log in</button>
-          </form>
-
-          <form
-            id="signup-form"
-            class="auth-form hidden"
-            data-mode="signup"
-          >
-            <label>
-              Email
-              <input
-                type="email"
-                id="signup-email"
-                name="email"
-                autocomplete="email"
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                id="signup-password"
-                name="password"
-                autocomplete="new-password"
-                minlength="6"
-                required
-              />
-            </label>
-            <small class="muted">
-              Password must be at least 6 characters (Firebase requirement).
-            </small>
-            <button type="submit">Create account</button>
-          </form>
-
-          <p id="auth-error" class="error-message hidden"></p>
-        </article>
+      <section id="auth-section" class="start-screen">
+        <div class="auth-split">
+          <div class="auth-stack">
+            <div class="auth-icon" aria-hidden="true">⚡</div>
+            <h2 class="auth-headline">Get started</h2>
+            <p class="auth-intro">Track sets, compare progress, and build consistency. Log in or sign up below.</p>
+          </div>
+          <div class="auth-form-panel">
+            <nav class="tab-nav" role="tablist">
+              <button id="login-tab" class="tab active" type="button" data-target="login-form">Log in</button>
+              <button id="signup-tab" class="tab" type="button" data-target="signup-form">Sign up</button>
+            </nav>
+            <form id="login-form" class="auth-form" data-mode="login">
+              <input type="email" id="login-email" name="email" placeholder="Email" autocomplete="email" required />
+              <input type="password" id="login-password" name="password" placeholder="Password" autocomplete="current-password" minlength="6" required />
+              <button type="submit" class="auth-submit">Log in</button>
+            </form>
+            <form id="signup-form" class="auth-form hidden" data-mode="signup">
+              <input type="email" id="signup-email" name="email" placeholder="Email" autocomplete="email" required />
+              <input type="password" id="signup-password" name="password" placeholder="Password (min 6 chars)" autocomplete="new-password" minlength="6" required />
+              <button type="submit" class="auth-submit">Create account</button>
+            </form>
+            <p id="auth-error" class="error-message hidden"></p>
+          </div>
+        </div>
       </section>
 
       <section id="app-section" class="hidden">
-        <article id="log-workout-article">
+        <article id="log-workout-article" data-route="/log">
           <h2>Log workout</h2>
           <div id="start-workout-wrap">
             <p class="muted">Start a workout to log sets. The session stays here until you finish it.</p>
@@ -117,96 +66,42 @@
           </div>
           <div id="active-workout-wrap" class="hidden">
             <p id="active-workout-date-label" class="active-date-label"></p>
-            <p class="muted active-workout-hint">You can leave the page anytime and continue this workout when you return. Click “Finish workout” when you’re done for good.</p>
+            <p class="muted active-workout-hint">You can leave the page anytime and continue when you return. Click "Finish workout" when you're done.</p>
             <div class="table-wrapper">
               <table class="workouts-table">
                 <thead>
-                  <tr>
-                    <th>Exercise</th>
-                    <th>Weight</th>
-                    <th>Reps</th>
-                    <th>Superset</th>
-                    <th>Notes</th>
-                    <th></th>
-                  </tr>
+                  <tr><th>Set</th><th>Exercise</th><th>Weight</th><th>Reps</th><th>Superset</th><th>Notes</th><th></th></tr>
                 </thead>
                 <tbody id="active-workout-body"></tbody>
               </table>
             </div>
             <form id="workout-form" class="grid">
               <input type="hidden" id="workout-date" />
-            <div>
-              <label>
-                Exercise
-                <input type="text" id="exercise-name" placeholder="e.g. Lat pulldown" required />
-              </label>
+              <div><label>Exercise <select id="exercise-name" required><option value="">Select exercise</option></select></label></div>
+              <div><label>Weight (kg) <input type="number" id="weight" min="0" step="0.5" required /></label></div>
+              <div><label>Reps <input type="number" id="reps" min="1" step="1" required /></label></div>
+              <div><label>Superset with <select id="superset-with"><option value="">No superset</option></select></label></div>
+              <div><label>Notes <input type="text" id="notes" placeholder="Optional" /></label></div>
+              <div class="form-actions">
+                <button type="submit" id="workout-submit-btn">Add set</button>
+                <button type="button" id="workout-cancel-edit-btn" class="secondary outline hidden">Cancel edit</button>
+              </div>
+            </form>
+            <p id="edit-indicator" class="muted hidden">Editing. Make changes and press "Update set" or cancel.</p>
+            <div id="competition-submit-wrap" class="competition-submit-wrap hidden">
+              <p class="muted">Submit this set to competition:</p>
+              <div id="competition-submit-list"></div>
+              <button type="button" id="comp-submit-dismiss" class="secondary outline comp-dismiss-btn">Dismiss</button>
             </div>
-            <div>
-              <label>
-                Weight (kg)
-                <input
-                  type="number"
-                  id="weight"
-                  min="0"
-                  step="0.5"
-                  required
-                />
-              </label>
+            <p id="comparison-message" class="comparison-message hidden"></p>
+            <p id="workout-error" class="error-message hidden"></p>
+            <div class="finish-workout-row">
+              <button type="button" id="finish-workout-btn" class="secondary">Finish workout</button>
             </div>
-            <div>
-              <label>
-                Reps
-                <input
-                  type="number"
-                  id="reps"
-                  min="1"
-                  step="1"
-                  required
-                />
-              </label>
-            </div>
-            <div>
-              <label>
-                Superset with
-                <select id="superset-with">
-                  <option value="">No superset</option>
-                </select>
-              </label>
-            </div>
-            <div>
-              <label>
-                Notes
-                <input
-                  type="text"
-                  id="notes"
-                  placeholder="Optional notes"
-                />
-              </label>
-            </div>
-            <div class="form-actions">
-              <button type="submit" id="workout-submit-btn">Add set</button>
-              <button
-                type="button"
-                id="workout-cancel-edit-btn"
-                class="secondary outline hidden"
-              >
-                Cancel edit
-              </button>
-            </div>
-          </form>
-          <p id="edit-indicator" class="muted hidden">
-            Editing an existing set. Make changes and press “Update set”, or
-            cancel.
-          </p>
-          <p id="comparison-message" class="comparison-message hidden"></p>
-          <p id="workout-error" class="error-message hidden"></p>
-          <div class="finish-workout-row">
-            <button type="button" id="finish-workout-btn" class="secondary">Finish workout</button>
-          </div>
           </div>
         </article>
 
-        <article id="recent-workouts-article">
+        <article id="recent-workouts-article" data-route="/recent">
           <h2>Recent workouts</h2>
           <div id="recent-dates-view">
             <p class="muted">Days you worked out. Click a date to view or edit.</p>
@@ -223,14 +118,7 @@
             <div class="table-wrapper">
               <table class="workouts-table">
                 <thead>
-                  <tr>
-                    <th>Exercise</th>
-                    <th>Weight</th>
-                    <th>Reps</th>
-                    <th>Superset</th>
-                    <th>Notes</th>
-                    <th></th>
-                  </tr>
+                  <tr><th>Set</th><th>Exercise</th><th>Weight</th><th>Reps</th><th>Superset</th><th>Notes</th><th></th></tr>
                 </thead>
                 <tbody id="detail-workout-body"></tbody>
               </table>
@@ -239,7 +127,7 @@
               <p class="muted">Add a set to this day:</p>
               <form id="detail-workout-form" class="grid">
                 <input type="hidden" id="detail-workout-date" />
-                <div><label>Exercise <input type="text" id="detail-exercise-name" placeholder="e.g. Lat pulldown" required /></label></div>
+                <div><label>Exercise <select id="detail-exercise-name" required><option value="">Select exercise</option></select></label></div>
                 <div><label>Weight (kg) <input type="number" id="detail-weight" min="0" step="0.5" required /></label></div>
                 <div><label>Reps <input type="number" id="detail-reps" min="1" step="1" required /></label></div>
                 <div><label>Superset with <select id="detail-superset-with"><option value="">No superset</option></select></label></div>
@@ -251,7 +139,25 @@
           </div>
         </article>
 
-        <article id="stats-article">
+        <article id="exercises-article" data-route="/exercises" class="hidden">
+          <h2>Exercise catalog</h2>
+          <p class="muted">Browse exercises with descriptions and correct form. Add your own custom exercises below.</p>
+          <div class="exercise-add-section">
+            <h3>Add custom exercise</h3>
+            <form id="add-exercise-form" class="add-exercise-form">
+              <label>Name <input type="text" id="new-exercise-name" placeholder="e.g. Bulgarian split squat" required /></label>
+              <label>Category <select id="new-exercise-category"><option value="Chest">Chest</option><option value="Back">Back</option><option value="Legs">Legs</option><option value="Shoulders">Shoulders</option><option value="Biceps">Biceps</option><option value="Triceps">Triceps</option><option value="Abs">Abs</option><option value="Other">Other</option></select></label>
+              <label>Description <input type="text" id="new-exercise-desc" placeholder="What muscles does it target?" /></label>
+              <label>Correct form <textarea id="new-exercise-form" rows="3" placeholder="Step-by-step form instructions"></textarea></label>
+              <label>Image URL <input type="url" id="new-exercise-image" placeholder="https://..." /></label>
+              <button type="submit">Add exercise</button>
+            </form>
+          </div>
+          <h3>All exercises</h3>
+          <div id="exercises-list" class="exercises-catalog"></div>
+        </article>
+
+        <article id="stats-article" data-route="/stats">
           <h2>Workout stats</h2>
           <div id="stats-overview" class="stats-grid"></div>
           <h3>Activity</h3>
@@ -261,17 +167,59 @@
           <h3>Volume by exercise (kg × reps)</h3>
           <div id="stats-volume" class="stats-list"></div>
         </article>
+
+        <article id="profile-article" data-route="/profile" class="hidden">
+          <h2>Profile</h2>
+          <p class="muted">Manage your account and preferences.</p>
+          <form id="profile-form" class="profile-form">
+            <label>Display name <input type="text" id="profile-display-name" name="displayName" placeholder="Your name" /></label>
+            <label>Email <input type="email" id="profile-email" name="email" readonly disabled placeholder="—" /><small class="muted">Managed by your account</small></label>
+            <label>Height (cm) <input type="number" id="profile-height" name="height" min="100" max="250" step="1" placeholder="e.g. 175" /></label>
+            <label>Body weight (kg) <input type="number" id="profile-body-weight" name="bodyWeight" min="30" max="300" step="0.1" placeholder="e.g. 75" /></label>
+            <label>Weight unit <select id="profile-weight-unit" name="weightUnit"><option value="kg">kg</option><option value="lb">lb</option></select></label>
+            <label>Birth year <input type="number" id="profile-birth-year" name="birthYear" min="1920" max="2015" step="1" placeholder="e.g. 1990" /></label>
+            <p id="profile-error" class="error-message hidden"></p>
+            <p id="profile-success" class="profile-success hidden"></p>
+            <button type="submit" id="profile-save-btn">Save profile</button>
+          </form>
+        </article>
+
+        <article id="competition-article" data-route="/competition" class="hidden">
+          <h2>Competition</h2>
+          <p class="muted">Compete in exercises – create or join a 24h challenge. Submit your best set (up to 3 tries) during a workout.</p>
+          <div id="competition-list-view">
+            <div class="competition-create">
+              <h3>Create competition</h3>
+              <form id="create-competition-form" class="competition-form-inline">
+                <select id="comp-exercise-name" required><option value="">Select exercise</option></select>
+                <button type="submit">Create</button>
+              </form>
+            </div>
+            <h3>Open competitions</h3>
+            <ul id="competition-list" class="competition-list"></ul>
+          </div>
+          <div id="competition-detail-view" class="hidden">
+            <header class="detail-header">
+              <button type="button" id="comp-back-btn" class="secondary outline">Back</button>
+              <div>
+                <p id="comp-detail-title" class="active-date-label"></p>
+                <p id="comp-detail-meta" class="muted session-meta"></p>
+              </div>
+            </header>
+            <div id="comp-leaderboard" class="comp-leaderboard"></div>
+            <div id="comp-actions">
+              <button type="button" id="comp-join-btn" class="hidden">Join competition</button>
+              <button type="button" id="comp-close-btn" class="secondary outline hidden">Close competition</button>
+            </div>
+          </div>
+        </article>
       </section>
 
       <footer class="muted footer">
-        <small>
-          Configure Firebase in <code>firebase-config.js</code> before using
-          the app. Sessions are grouped by date, like one notebook page per day.
-        </small>
+        <small>Sessions are grouped by date, like one notebook page per day.</small>
       </footer>
     </main>
 
     <script type="module" src="./main.js"></script>
   </body>
 </html>
-
