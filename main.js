@@ -58,10 +58,22 @@ let currentCompetitions = new Map();
 let myParticipations = new Map();
 let selectedCompetitionId = null;
 let lastAddedSet = null;
+let scrollToSetId = null;
 let unsubscribeCompetitions = null;
 let unsubscribeParticipations = null;
 let userExercises = [];
 let unsubscribeUserExercises = null;
+let lastDetailSets = [];
+
+function refreshDetailSupersetOptions() {
+  const sel = $("#detail-superset-with");
+  if (!sel) return;
+  const currentKey = $("#detail-exercise-name")?.value?.trim() ? normalizeExerciseKey($("#detail-exercise-name").value.trim()) : "";
+  const exerciseKeys = [...new Map(lastDetailSets.map(({ data }) => [(data.exerciseKey || normalizeExerciseKey(data.exerciseName || "")), data.exerciseName])).entries()];
+  const curVal = sel.value;
+  sel.innerHTML = '<option value="">No superset</option>' + exerciseKeys.filter(([k]) => k && k !== currentKey).map(([key, name]) => `<option value="${escapeHtml(key)}">${escapeHtml(name || key)}</option>`).join("");
+  if ([...sel.querySelectorAll("option")].some((o) => o.value === curVal)) sel.value = curVal;
+}
 
 // ----- Auth UI -----
 function setAuthError(msg) {
@@ -197,7 +209,16 @@ function getAllExercises() {
 }
 
 function populateExerciseSelects(extraNames = []) {
-  const names = [...new Set([...getAllExercises().map((e) => e.name), ...extraNames])].sort();
+  const all = [...getAllExercises().map((e) => e.name), ...extraNames].filter(Boolean);
+  const unique = [...new Set(all)];
+  const recentSet = new Set(extraNames.filter(Boolean));
+  const names = unique.sort((a, b) => {
+    const aRecent = recentSet.has(a);
+    const bRecent = recentSet.has(b);
+    if (aRecent && !bRecent) return -1;
+    if (!aRecent && bRecent) return 1;
+    return a.localeCompare(b);
+  });
   const opts = (el) => {
     if (!el) return;
     const current = el.value;
@@ -371,21 +392,22 @@ workoutForm?.addEventListener("submit", async (e) => {
   const exerciseName = $("#exercise-name")?.value?.trim();
   const weight = parseFloat($("#weight")?.value);
   const reps = parseInt($("#reps")?.value, 10);
-  const supersetWithId = supersetSelect?.value || null;
+  const supersetWithExerciseKey = supersetSelect?.value?.trim() || null;
   const notes = $("#notes")?.value?.trim();
   if (!date || !exerciseName || Number.isNaN(weight) || Number.isNaN(reps)) {
     setWorkoutError("Please fill in date, exercise, weight and reps.");
     return;
   }
   const exerciseKey = normalizeExerciseKey(exerciseName);
-    const payload = { userId: currentUser.uid, date, exerciseName: exerciseName.trim(), exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithId, notes: notes || null };
+    const payload = { userId: currentUser.uid, date, exerciseName: exerciseName.trim(), exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithExerciseKey, notes: notes || null };
   try {
     if (editingWorkoutId) {
       await updateDoc(doc(db, "workouts", editingWorkoutId), { ...payload, updatedAt: serverTimestamp() });
       exitEditMode();
     } else {
       const isFirstSet = activeSessionId && getSetsForSession(activeSessionId).length === 0;
-      await addDoc(collection(db, "workouts"), { ...payload, sessionId: activeSessionId || null, createdAt: serverTimestamp() });
+      const ref = await addDoc(collection(db, "workouts"), { ...payload, sessionId: activeSessionId || null, createdAt: serverTimestamp() });
+      scrollToSetId = ref.id;
       if (isFirstSet) {
         await updateDoc(doc(db, "workoutSessions", activeSessionId), { startedAt: serverTimestamp() });
       }
@@ -402,6 +424,8 @@ workoutForm?.addEventListener("submit", async (e) => {
 });
 
 workoutCancelEditBtn?.addEventListener("click", exitEditMode);
+
+$("#exercise-name")?.addEventListener("change", refreshSupersetOptions);
 
 function getTodayString() {
   const d = new Date();
@@ -490,8 +514,12 @@ function renderDeltaIcon(current, prev, type) {
   return "";
 }
 
-function renderWorkoutRow(id, data, onEdit, onDelete, hideExerciseName, setNumber) {
-  const supersetLabel = data.supersetWithId && currentWorkouts.has(data.supersetWithId) ? currentWorkouts.get(data.supersetWithId).exerciseName : (data.superset ?? "");
+function getExerciseNameFromKey(exerciseKey, sets) {
+  const s = sets?.find((x) => (x.data?.exerciseKey || normalizeExerciseKey(x.data?.exerciseName || "")) === exerciseKey);
+  return s?.data?.exerciseName || exerciseKey || "—";
+}
+
+function renderWorkoutRow(id, data, onEdit, onDelete, setNumber) {
   const exerciseKey = data.exerciseKey || normalizeExerciseKey(data.exerciseName || "");
   const prev = getPreviousSet(exerciseKey, data.createdAt, id);
   const weightIcon = renderDeltaIcon(data.weight, prev?.weight, "Weight");
@@ -499,10 +527,8 @@ function renderWorkoutRow(id, data, onEdit, onDelete, hideExerciseName, setNumbe
   const setCell = setNumber != null ? `<td class="set-number">${setNumber}</td>` : "";
   return `<tr data-id="${id}">
     ${setCell}
-    <td>${hideExerciseName ? "" : escapeHtml(data.exerciseName || "")}</td>
     <td class="weight-cell">${data.weight ?? ""}${weightIcon}</td>
     <td class="reps-cell">${data.reps ?? ""}${repsIcon}</td>
-    <td class="superset-cell">${escapeHtml(supersetLabel)}</td>
     <td>${escapeHtml(data.notes || "")}</td>
     <td class="workout-actions">${onEdit ? `<button type="button" class="secondary outline edit-set-btn" data-id="${id}">Edit</button>` : ""}${onDelete ? `<button type="button" class="secondary outline delete-set-btn" data-id="${id}">Delete</button>` : ""}</td>
   </tr>`;
@@ -516,13 +542,36 @@ function renderLogSection() {
     if (workoutDateInput) workoutDateInput.value = session.date;
     if ($("#active-workout-date-label")) $("#active-workout-date-label").textContent = "Workout: " + formatDateLabel(session.date);
     const sets = getSetsForSession(activeSessionId);
+    const recentNames = [...new Set(sets.map(({ data }) => data.exerciseName).filter(Boolean))];
+    if (recentNames.length) populateExerciseSelects(recentNames);
     const groups = groupSetsByExercise(sets);
     activeWorkoutBody.innerHTML = [...groups.entries()].map(([, groupSets]) => {
-      const exName = groupSets[0]?.data?.exerciseName || "—";
-      return `<tr class="exercise-group-header"><td colspan="7">${escapeHtml(exName)}</td></tr>` +
-        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, false, true, i + 1)).join("");
+      const first = groupSets[0]?.data || {};
+      const exName = first.exerciseName || "—";
+      const exKey = first.exerciseKey || (first.exerciseName ? normalizeExerciseKey(first.exerciseName) : "");
+      const count = groupSets.length;
+      const supersetKey = first.supersetWithExerciseKey;
+      const supersetName = supersetKey ? getExerciseNameFromKey(supersetKey, sets) : "";
+      const supersetSuffix = supersetName ? ` — superset with ${escapeHtml(supersetName)}` : "";
+      return `<tr class="exercise-group-header" data-exercise-name="${escapeHtml(exName)}" data-exercise-key="${escapeHtml(exKey)}"><td colspan="5"><span class="set-count">(${count})</span> ${escapeHtml(exName)}${supersetSuffix}</td></tr>` +
+        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, false, i + 1)).join("");
     }).join("");
     refreshSupersetOptions();
+    if (scrollToSetId) {
+      const row = activeWorkoutBody.querySelector(`tr[data-id="${scrollToSetId}"]`);
+      if (row) row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      scrollToSetId = null;
+    }
+    activeWorkoutBody.querySelectorAll(".exercise-group-header").forEach((row) => {
+      row.addEventListener("click", () => {
+        const name = row.getAttribute("data-exercise-name");
+        if (!name) return;
+        const select = $("#exercise-name");
+        if (!select) return;
+        select.value = name;
+        refreshSupersetOptions();
+      });
+    });
     activeWorkoutBody.querySelectorAll(".edit-set-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         editingWorkoutId = btn.getAttribute("data-id");
@@ -531,7 +580,8 @@ function renderLogSection() {
           $("#exercise-name").value = d.exerciseName ?? "";
           $("#weight").value = d.weight ?? "";
           $("#reps").value = d.reps ?? "";
-          supersetSelect.value = d.supersetWithId ?? "";
+          const supersetVal = d.supersetWithExerciseKey ?? (d.supersetWithId && currentWorkouts.has(d.supersetWithId) ? (currentWorkouts.get(d.supersetWithId).exerciseKey || normalizeExerciseKey(currentWorkouts.get(d.supersetWithId).exerciseName || "")) : null);
+          supersetSelect.value = supersetVal ?? "";
           $("#notes").value = d.notes ?? "";
         }
         workoutCancelEditBtn?.classList.remove("hidden");
@@ -548,10 +598,11 @@ function renderLogSection() {
 
 function refreshSupersetOptions() {
   const sets = activeSessionId ? getSetsForSession(activeSessionId) : [];
+  const currentKey = $("#exercise-name")?.value?.trim() ? normalizeExerciseKey($("#exercise-name").value.trim()) : "";
+  const exerciseKeys = [...new Map(sets.map(({ data }) => [(data.exerciseKey || normalizeExerciseKey(data.exerciseName || "")), data.exerciseName])).entries()];
   const opts = ['<option value="">No superset</option>'];
-  sets.forEach(({ id, data }) => {
-    if (id === editingWorkoutId) return;
-    opts.push(`<option value="${id}">${escapeHtml((data.exerciseName || "") + ` (${data.weight ?? ""} kg × ${data.reps ?? ""})`)}</option>`);
+  exerciseKeys.forEach(([key, name]) => {
+    if (key && key !== currentKey) opts.push(`<option value="${escapeHtml(key)}">${escapeHtml(name || key)}</option>`);
   });
   supersetSelect.innerHTML = opts.join("");
 }
@@ -587,7 +638,12 @@ $("#finish-workout-btn")?.addEventListener("click", async () => {
     const durationMinutes = startedAt ? Math.max(0, Math.round((endTime - startedAt) / 60000)) : 0;
     await updateDoc(doc(db, "workoutSessions", activeSessionId), { endedAt: Timestamp.fromDate(endTime), durationMinutes });
     await setDoc(doc(db, "sessions", currentUser.uid), { activeSessionId: null, updatedAt: serverTimestamp() });
+    const finishedSessionId = activeSessionId;
     exitEditMode();
+    navigate("/recent");
+    selectedSessionId = finishedSessionId;
+    selectedDateForDetail = null;
+    renderRecentSection();
   } catch (e) {
     console.error(e);
   }
@@ -610,13 +666,33 @@ function renderRecentSection() {
     const s = selectedSessionId ? currentSessions.get(selectedSessionId) : null;
     $("#detail-session-meta").textContent = s ? [s.endedAt?.toDate?.()?.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }), s.durationMinutes != null ? `${s.durationMinutes} min` : ""].filter(Boolean).join(" · ") || "—" : "Legacy";
     const sets = selectedSessionId ? getSetsForSession(selectedSessionId) : getSetsForLegacyDate(selectedDateForDetail);
+    const recentNames = [...new Set(sets.map(({ data }) => data.exerciseName).filter(Boolean))];
+    if (recentNames.length) populateExerciseSelects(recentNames);
+    lastDetailSets = sets;
     const detailBody = document.getElementById("detail-workout-body");
     const groups = groupSetsByExercise(sets);
     detailBody.innerHTML = [...groups.entries()].map(([, groupSets]) => {
-      const exName = groupSets[0]?.data?.exerciseName || "—";
-      return `<tr class="exercise-group-header"><td colspan="7">${escapeHtml(exName)}</td></tr>` +
-        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, true, true, i + 1)).join("");
+      const first = groupSets[0]?.data || {};
+      const exName = first.exerciseName || "—";
+      const exKey = first.exerciseKey || (first.exerciseName ? normalizeExerciseKey(first.exerciseName) : "");
+      const count = groupSets.length;
+      const supersetKey = first.supersetWithExerciseKey;
+      const supersetName = supersetKey ? getExerciseNameFromKey(supersetKey, sets) : "";
+      const supersetSuffix = supersetName ? ` — superset with ${escapeHtml(supersetName)}` : "";
+      return `<tr class="exercise-group-header" data-exercise-name="${escapeHtml(exName)}" data-exercise-key="${escapeHtml(exKey)}"><td colspan="5"><span class="set-count">(${count})</span> ${escapeHtml(exName)}${supersetSuffix}</td></tr>` +
+        groupSets.map(({ id, data }, i) => renderWorkoutRow(id, data, true, true, i + 1)).join("");
     }).join("");
+    refreshDetailSupersetOptions();
+    detailBody.querySelectorAll(".exercise-group-header").forEach((row) => {
+      row.addEventListener("click", () => {
+        const name = row.getAttribute("data-exercise-name");
+        if (!name) return;
+        const select = $("#detail-exercise-name");
+        if (!select) return;
+        select.value = name;
+        refreshDetailSupersetOptions();
+      });
+    });
     detailBody.querySelectorAll(".edit-set-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         detailEditingId = btn.getAttribute("data-id");
@@ -625,7 +701,8 @@ function renderRecentSection() {
           $("#detail-exercise-name").value = d.exerciseName ?? "";
           $("#detail-weight").value = d.weight ?? "";
           $("#detail-reps").value = d.reps ?? "";
-          $("#detail-superset-with").value = d.supersetWithId ?? "";
+          const dSuperset = d.supersetWithExerciseKey ?? (d.supersetWithId && currentWorkouts.has(d.supersetWithId) ? (currentWorkouts.get(d.supersetWithId).exerciseKey || normalizeExerciseKey(currentWorkouts.get(d.supersetWithId).exerciseName || "")) : null);
+          $("#detail-superset-with").value = dSuperset ?? "";
           $("#detail-notes").value = d.notes ?? "";
         }
         $("#detail-add-set-btn").textContent = "Update set";
@@ -662,6 +739,8 @@ function renderRecentSection() {
   }
 }
 
+$("#detail-exercise-name")?.addEventListener("change", refreshDetailSupersetOptions);
+
 detailBackBtn?.addEventListener("click", () => {
   selectedSessionId = null;
   selectedDateForDetail = null;
@@ -677,10 +756,10 @@ $("#detail-workout-form")?.addEventListener("submit", async (e) => {
   const exerciseName = $("#detail-exercise-name")?.value?.trim();
   const weight = parseFloat($("#detail-weight")?.value);
   const reps = parseInt($("#detail-reps")?.value, 10);
-  const supersetWithId = $("#detail-superset-with")?.value || null;
+  const supersetWithExerciseKey = $("#detail-superset-with")?.value?.trim() || null;
   const notes = $("#detail-notes")?.value?.trim();
   if (!exerciseName || Number.isNaN(weight) || Number.isNaN(reps)) return;
-  const payload = { userId: currentUser.uid, date, exerciseName, exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithId, notes: notes || null };
+  const payload = { userId: currentUser.uid, date, exerciseName, exerciseKey: normalizeExerciseKey(exerciseName), weight, reps, supersetWithExerciseKey, notes: notes || null };
   try {
     if (detailEditingId) {
       await updateDoc(doc(db, "workouts", detailEditingId), { ...payload, updatedAt: serverTimestamp() });

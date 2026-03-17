@@ -248,6 +248,7 @@ body {
   border-left: 4px solid rgba(255,255,255,0.4);
 }
 .workouts-table tbody tr.exercise-group-header td:first-child { padding-left: calc(1rem - 4px); }
+.exercise-group-header .set-count { opacity: 0.9; font-weight: 500; }
 .workouts-table tbody tr.exercise-group-header:first-child { border-top: none; }
 .workouts-table tbody tr:hover { background: rgba(15, 118, 110, 0.08); }
 .workouts-table tbody tr.exercise-group-header:hover {
